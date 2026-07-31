@@ -22,7 +22,7 @@ func main() {
 	os.Exit(run(ctx, os.Args, os.Stdout, os.Stderr))
 }
 
-func run(_ context.Context, args []string, stdout, stderr io.Writer) int {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) < 2 {
 		printUsageTo(stderr)
 		return exitUsage
@@ -43,8 +43,7 @@ func run(_ context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "llm-broker worker: not implemented")
 		return exitNotImplemented
 	case "migrate":
-		fmt.Fprintln(stderr, "llm-broker migrate: not implemented")
-		return exitNotImplemented
+		return runMigrate(ctx, args[2:], stdout, stderr)
 	case "client":
 		fmt.Fprintln(stderr, "llm-broker client: not implemented")
 		return exitNotImplemented
@@ -79,6 +78,12 @@ config:
   llm-broker config validate [path]
   llm-broker config show [path]
     path defaults to $LLM_BROKER_CONFIG_FILE
+
+migrate:
+  llm-broker migrate status [path]
+  llm-broker migrate up [path]
+    applies embedded SQL migrations; the database URL is read from the
+    environment variable configured as database.url_env in the config
 
 `)
 }

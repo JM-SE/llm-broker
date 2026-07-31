@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P02.
-- State: `ready_for_review`.
+- State: `accepted`.
 - Prerequisite: accepted P01.
 - Runtime impact: none; no operational listener or worker.
 

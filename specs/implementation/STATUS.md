@@ -2,10 +2,11 @@
 
 ## Current Gate
 
-- Current phase: P02, Generic Contracts and Configuration.
+- Current phase: P03, PostgreSQL Persistence.
 - State: `ready_for_review`.
-- Previous phases: P00 and P01 accepted.
-- Git policy: initialized on `main`; no automatic commits.
+- Previous phases: P00, P01, and P02 accepted.
+- Git policy: initialized on `main`; no automatic commits (changes are left for
+  manual review and user commits).
 
 ## Product Track
 
@@ -13,8 +14,8 @@
 | --- | --- | --- |
 | P00 | `accepted` | approved |
 | P01 | `accepted` | approved |
-| P02 | `ready_for_review` | P01 accepted |
-| P03 | `blocked` | requires P02 |
+| P02 | `accepted` | approved |
+| P03 | `ready_for_review` | P02 accepted |
 | P04 | `blocked` | requires P03 |
 | P05 | `blocked` | requires P04 |
 | P06 | `blocked` | requires P05 |
@@ -78,9 +79,11 @@
 - Initial host-specific Phase 00: superseded before approval.
 - Generic Product P00: accepted.
 - Product P01: accepted.
-- Product P02: ready for review (contracts, configuration, backend interfaces,
+- Product P02: accepted (contracts, configuration, backend interfaces,
   OpenAPI).
+- Product P03: ready for review (PostgreSQL persistence, migrations, store,
+  integration tests).
 
 ## Suggested Commit Message
 
-`feat: P02 generic contracts and configuration (domain, config, backend interfaces, OpenAPI, examples)`
+`feat: P03 PostgreSQL persistence (migrations, store, migrate commands, integration tests)`

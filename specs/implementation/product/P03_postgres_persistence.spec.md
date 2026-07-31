@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P03.
-- State: `pending`.
+- State: `ready_for_review`.
 - Prerequisite: accepted P02.
 - Runtime impact: test PostgreSQL only; no existing database is reused.
 
@@ -102,6 +102,61 @@ store for auth metadata, tasks, payloads, results, attempts, and worker state.
 
 ## Handoff
 
-Include PostgreSQL versions, migration hashes/status, concurrency test evidence,
-role permissions, cleanup evidence, changed files, Git status, and a suggested
-commit message. Stop for approval before P04.
+### Changed Files
+
+- `migrations/embed.go` and `migrations/00001_initial_schema.sql`: embedded
+  Goose migrations (8 tables, CHECK constraints, partial indexes).
+- `internal/store/postgres/`: `store.go` (pool/options), `tasks.go`
+  (create/idempotent replay/conflict, transitions, claim with
+  `FOR UPDATE SKIP LOCKED`, lease renew), `clients.go`, `lock.go` (session
+  advisory lock), `heartbeat.go`, `cleanup.go` (bounded retention purges),
+  `schema.go` (version compatibility check).
+- Integration suite: `harness_test.go` (TestMain reset/migrate/roles),
+  `schema_test.go`, `tasks_test.go` (incl. concurrency), `clients_test.go`,
+  `lock_test.go`, `heartbeat_test.go`, `cleanup_test.go`.
+- `cmd/llm-broker/migrate.go` + tests: `migrate status|up` with config and
+  environment URL resolution.
+- `scripts/pg-test-up.sh` / `scripts/pg-test-down.sh`: disposable test
+  database lifecycle (loopback, port 55432).
+- `docs/database.md`: schema, roles, migrations, retention, backup/restore.
+- `go.mod`/`go.sum`: goose v3.27.3, pgx v5.10.0, google/uuid.
+
+### Validation Evidence
+
+- `go test ./...`: all packages pass (integration suite against disposable
+  PostgreSQL 17 on 127.0.0.1:55432).
+- `go test -race ./...`: store integration suite passes.
+- `go vet ./...`, `gofmt -l .` (empty), `go build ./...`: clean.
+- Concurrency tests: 16 identical concurrent submissions produce exactly one
+  task and 15 replays; 10 mixed submissions produce 1 created / 4 replays /
+  5 conflicts; 12 concurrent claimers claim each of 5 tasks exactly once;
+  exactly one advisory-lock session holds.
+- Runtime role DML works; DDL fails with permission denied.
+- `migrate status` and `migrate up` smoke-tested against the disposable
+  database; `status` reports applied migrations and version 1.
+- Cleanup: payload (1h), result (24h), metadata (30d) purged in order;
+  idempotency key + hash survive payload purge and replay to the original
+  task.
+
+### Manual Acceptance
+
+- Review `migrations/00001_initial_schema.sql` directly (no ORM).
+- `scripts/pg-test-up.sh` then `scripts/pg-test-down.sh` destroy the test
+  database; no existing database is touched.
+- Test database coordinates are generated at runtime and absent from Git.
+
+### Compatibility Questions
+
+- The claim primitive is intentionally policy-free (oldest first) so it is a
+  reusable primitive; scheduler policy (priority, aging, affinity) composes
+  above it in P05.
+- `task_results` is written by the worker phase (P07); the cleanup suite
+  inserts fixture rows to exercise purge until then.
+- `migrate` has no `down` command in v1: forward-only with documented
+  irreversible boundaries, per the phase spec.
+
+### Suggested Commit Message
+
+`feat: P03 PostgreSQL persistence (migrations, store, migrate commands, integration tests)`
+
+Stop for approval before P04.
