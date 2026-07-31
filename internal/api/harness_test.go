@@ -165,6 +165,11 @@ type testEnv struct {
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
+	return newTestEnvWithConfig(t, testConfig())
+}
+
+func newTestEnvWithConfig(t *testing.T, cfg *config.Config) *testEnv {
+	t.Helper()
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	verifier := auth.NewVerifier(func(ctx context.Context, identifier string) (auth.Identity, []byte, bool, error) {
@@ -177,7 +182,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		}
 		return auth.Identity{ClientID: c.ID, Name: c.Name}, c.CredentialDigest, c.Enabled, nil
 	})
-	srv := New(Options{Store: rtStore, Config: testConfig(), Verifier: verifier, Logger: logger})
+	srv := New(Options{Store: rtStore, Config: cfg, Verifier: verifier, Logger: logger})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return &testEnv{ts: ts, logs: &logs, store: rtStore}

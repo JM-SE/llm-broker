@@ -11,6 +11,7 @@ import (
 
 	"github.com/JM-SE/llm-broker/internal/backend"
 	"github.com/JM-SE/llm-broker/internal/domain"
+	"github.com/JM-SE/llm-broker/internal/metrics"
 	"github.com/JM-SE/llm-broker/internal/store/postgres"
 
 	"github.com/google/uuid"
@@ -44,6 +45,7 @@ func (w *Worker) execute(ctx context.Context, tw postgres.TaskWithPayload) error
 	if err != nil {
 		log.Error("task payload is corrupt; marking failed", "error", err)
 		_, err = w.store.FinishTaskFailed(execCtx, tw.ID, attempt, string(domain.ErrorInternal), "invalid_payload")
+		w.metrics.IncInference(string(domain.ErrorInternal))
 		return err
 	}
 
@@ -51,6 +53,7 @@ func (w *Worker) execute(ctx context.Context, tw postgres.TaskWithPayload) error
 	if tw.CancelRequestedAt != nil {
 		log.Info("cancelling before inference (cancel requested while queued or claimed)")
 		_, err := w.store.FinishTaskCancelled(execCtx, tw.ID, attempt)
+		w.metrics.IncInference(metrics.ClassCancelled)
 		return err
 	}
 
@@ -79,6 +82,7 @@ func (w *Worker) execute(ctx context.Context, tw postgres.TaskWithPayload) error
 		if !errors.As(err, &be) {
 			log.Error("adapter returned an unclassified error; marking failed", "error", err)
 			_, err = w.store.FinishTaskFailed(execCtx, tw.ID, attempt, string(domain.ErrorInternal), "adapter_internal")
+			w.metrics.IncInference(string(domain.ErrorInternal))
 			return err
 		}
 		return w.handleBackendError(execCtx, log, tw, policy, attempt, be)
@@ -94,12 +98,14 @@ func (w *Worker) execute(ctx context.Context, tw postgres.TaskWithPayload) error
 	if cur.CancelRequestedAt != nil {
 		log.Info("cancelling after inference completed (cancel requested during call); output discarded")
 		_, err := w.store.FinishTaskCancelled(execCtx, tw.ID, attempt)
+		w.metrics.IncInference(metrics.ClassCancelled)
 		return err
 	}
 
 	if err := validateOutput(policy, sub.Response, resp); err != nil {
 		log.Error("output failed validation; marking failed", "error", err)
 		_, err = w.store.FinishTaskFailed(execCtx, tw.ID, attempt, string(domain.ErrorOutputInvalid), "output_invalid")
+		w.metrics.IncInference(string(domain.ErrorOutputInvalid))
 		return err
 	}
 
@@ -113,6 +119,7 @@ func (w *Worker) execute(ctx context.Context, tw postgres.TaskWithPayload) error
 	if err != nil {
 		return fmt.Errorf("persist success: %w", err)
 	}
+	w.metrics.IncInference(metrics.ClassSucceeded)
 	log.Info("task succeeded", "attempts", attempt, "finish_reason", resp.FinishReason)
 	return nil
 }
@@ -131,6 +138,7 @@ func (w *Worker) handleBackendError(execCtx context.Context, log *slog.Logger, t
 		if cur.CancelRequestedAt != nil {
 			log.Info("cancelling after transient failure (cancel requested during call)")
 			_, err := w.store.FinishTaskCancelled(execCtx, tw.ID, attempt)
+			w.metrics.IncInference(metrics.ClassCancelled)
 			return err
 		}
 		if attempt < policy.MaxAttempts {
@@ -139,11 +147,13 @@ func (w *Worker) handleBackendError(execCtx context.Context, log *slog.Logger, t
 				"attempt", attempt, "max_attempts", policy.MaxAttempts,
 				"class", be.Class, "code", be.Code, "backoff", delay)
 			_, err := w.store.RequeueForRetry(execCtx, tw.ID, attempt, string(be.Class), be.Code, w.now().Add(delay))
+			w.metrics.IncInference(string(be.Class))
 			return err
 		}
 		log.Warn("attempt budget exhausted; marking failed",
 			"attempt", attempt, "max_attempts", policy.MaxAttempts, "class", be.Class, "code", be.Code)
 		_, err = w.store.FinishTaskFailed(execCtx, tw.ID, attempt, string(be.Class), be.Code)
+		w.metrics.IncInference(string(be.Class))
 		return err
 	case domain.ErrorIndeterminate:
 		// Ambiguous outcome: the backend may have accepted the request.
@@ -152,12 +162,14 @@ func (w *Worker) handleBackendError(execCtx context.Context, log *slog.Logger, t
 		// it. Never auto-retry.
 		log.Error("indeterminate outcome; blocking new inference until operator resolution",
 			"class", be.Class, "code", be.Code)
+		w.metrics.IncInference(string(domain.ErrorIndeterminate))
 		return w.store.MarkAttemptFailed(execCtx, tw.ID, attempt, string(be.Class), be.Code)
 	default:
 		// backend_rejected, output_invalid, client_invalid, policy_rejected,
 		// internal: non-retryable, terminal failure.
 		log.Error("terminal failure", "class", be.Class, "code", be.Code)
 		_, err := w.store.FinishTaskFailed(execCtx, tw.ID, attempt, string(be.Class), be.Code)
+		w.metrics.IncInference(string(be.Class))
 		return err
 	}
 }

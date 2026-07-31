@@ -566,8 +566,9 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
 // sanitized 500.
 func (s *Server) internalError(w http.ResponseWriter, r *http.Request, err error) {
 	s.log.Error("request failed",
+		"event", "error",
 		"request_id", requestIDFrom(r.Context()),
-		"path", r.URL.Path,
+		"route", routeLabel(r),
 		"error", err)
 	writeProblem(w, http.StatusInternalServerError, codeInternal,
 		"internal error", "the request could not be completed")

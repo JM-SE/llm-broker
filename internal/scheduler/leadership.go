@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/JM-SE/llm-broker/internal/metrics"
 	"github.com/JM-SE/llm-broker/internal/store/postgres"
 )
 
@@ -24,6 +25,7 @@ type Leader struct {
 	workerID uuid.UUID
 	interval time.Duration
 	log      *slog.Logger
+	metrics  *metrics.Metrics
 
 	mu      sync.Mutex
 	held    bool
@@ -75,8 +77,18 @@ func (l *Leader) TryAcquire(ctx context.Context) (bool, error) {
 		_ = release()
 		return false, fmt.Errorf("announce worker heartbeat: %w", err)
 	}
+	l.setLeadership(true)
 	go l.heartbeat(l.stop)
 	return true, nil
+}
+
+// SetMetrics attaches the instrumentation surface (nil-safe).
+func (l *Leader) SetMetrics(m *metrics.Metrics) { l.metrics = m }
+
+func (l *Leader) setLeadership(v bool) {
+	if l.metrics != nil {
+		l.metrics.SetLeadership(v)
+	}
 }
 
 // heartbeat refreshes the active heartbeat while the lock is held. A failed
@@ -116,6 +128,7 @@ func (l *Leader) lost() {
 	if rel != nil {
 		_ = rel()
 	}
+	l.setLeadership(false)
 }
 
 // Held reports whether this leader currently owns the exclusive lock.
@@ -146,10 +159,13 @@ func (l *Leader) Release() {
 	l.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_ = l.store.UpsertWorkerHeartbeat(ctx, l.workerID, "stopped")
+	if err := l.store.UpsertWorkerHeartbeat(ctx, l.workerID, "stopped"); err != nil {
+		l.log.Error("heartbeat stopped update failed", "worker_id", l.workerID, "error", err)
+	}
 	cancel()
 	close(stop)
 	if rel != nil {
 		_ = rel()
 	}
+	l.setLeadership(false)
 }

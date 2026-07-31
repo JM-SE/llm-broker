@@ -82,6 +82,9 @@ type APIConfig struct {
 	Listen string `json:"listen"`
 	// BodyLimitBytes bounds the request body (max MaxBodyBytes).
 	BodyLimitBytes int64 `json:"body_limit_bytes,omitempty"`
+	// MetricsEnabled exposes GET /metrics (Prometheus text format) with
+	// bounded labels. Off by default; operators opt in explicitly.
+	MetricsEnabled bool `json:"metrics_enabled,omitempty"`
 }
 
 // DatabaseConfig references the PostgreSQL connection by environment

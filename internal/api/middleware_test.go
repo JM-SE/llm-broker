@@ -70,7 +70,7 @@ func TestLogsSanitized(t *testing.T) {
 			t.Errorf("logs leak %q: %s", banned, logs)
 		}
 	}
-	for _, want := range []string{"request_id=", "method=POST", "path=/v1/tasks", "status=201"} {
+	for _, want := range []string{"request_id=", "method=POST", "route=tasks.create", "status=201"} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("logs missing %q: %s", want, logs)
 		}

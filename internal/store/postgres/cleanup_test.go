@@ -162,3 +162,33 @@ func TestCleanupPreservesIdempotency(t *testing.T) {
 		t.Errorf("replay returned %s, want original %s", res.TaskID, task.ID)
 	}
 }
+
+// TestCleanupNeverTouchesQueuedPayloads verifies the retention job cannot
+// purge active work: a queued task with an aged created_at keeps its payload
+// regardless of retention windows.
+func TestCleanupNeverTouchesQueuedPayloads(t *testing.T) {
+	client, policy := retentionWorkload(t)
+	ctx := context.Background()
+	res := mustCreateTask(t, adminStore, client.ID, policy.ID, "queued-key-0001", testHash(2))
+	// Age the task far beyond every retention window; it is still queued.
+	// (backdate() moves finished_at and would violate the state checks on a
+	// queued row, so the created_at moves directly here.)
+	if _, err := adminStore.pool.Exec(ctx,
+		`UPDATE tasks SET created_at = now() - (960 * interval '1 hour') WHERE id = $1`,
+		res.TaskID); err != nil {
+		t.Fatalf("age task: %v", err)
+	}
+	if _, err := adminStore.CleanupExpired(ctx, 100); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	tw, err := adminStore.GetTaskWithPayload(ctx, res.TaskID)
+	if err != nil {
+		t.Fatalf("queued task lost its payload: %v", err)
+	}
+	if tw.State != domain.TaskQueued {
+		t.Errorf("state = %s, want queued", tw.State)
+	}
+	if len(tw.Payload) == 0 {
+		t.Error("queued task payload was purged")
+	}
+}

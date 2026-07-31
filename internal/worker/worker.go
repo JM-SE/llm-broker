@@ -25,8 +25,11 @@ import (
 
 	"github.com/JM-SE/llm-broker/internal/backend"
 	"github.com/JM-SE/llm-broker/internal/config"
+	"github.com/JM-SE/llm-broker/internal/metrics"
 	"github.com/JM-SE/llm-broker/internal/scheduler"
 	"github.com/JM-SE/llm-broker/internal/store/postgres"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Options wires the worker to its dependencies.
@@ -49,23 +52,33 @@ type Options struct {
 	ClaimPoll time.Duration
 	// DrainTimeout bounds graceful shutdown while an inference completes.
 	DrainTimeout time.Duration
+	// Metrics is optional; when nil a fresh in-process instance is created.
+	Metrics *metrics.Metrics
+	// RetentionInterval is the cadence of the bounded retention sweep
+	// (default 10 minutes); 0 disables the sweep.
+	RetentionInterval time.Duration
+	// RetentionBatch bounds each cleanup transaction (default 1000).
+	RetentionBatch int
 }
 
 // Worker owns the active execution loop.
 type Worker struct {
-	store        *postgres.Store
-	sched        *scheduler.Scheduler
-	leader       *scheduler.Leader
-	registry     *backend.Registry
-	capabilities map[string]config.Capability
-	backends     map[string]config.BackendConfig
-	policy       scheduler.Policy
-	log          *slog.Logger
-	now          func() time.Time
-	rng          *rand.Rand
-	claimPoll    time.Duration
-	drainTimeout time.Duration
-	wg           sync.WaitGroup // in-flight bookkeeping goroutines
+	store             *postgres.Store
+	sched             *scheduler.Scheduler
+	leader            *scheduler.Leader
+	registry          *backend.Registry
+	capabilities      map[string]config.Capability
+	backends          map[string]config.BackendConfig
+	policy            scheduler.Policy
+	log               *slog.Logger
+	metrics           *metrics.Metrics
+	now               func() time.Time
+	rng               *rand.Rand
+	claimPoll         time.Duration
+	drainTimeout      time.Duration
+	retentionInterval time.Duration
+	retentionBatch    int
+	wg                sync.WaitGroup // in-flight bookkeeping goroutines
 }
 
 // New builds a worker with defaults for zero values.
@@ -88,20 +101,35 @@ func New(opts Options) *Worker {
 	if opts.Policy.Lease <= 0 {
 		opts.Policy = scheduler.DefaultPolicy()
 	}
-	return &Worker{
-		store:        opts.Store,
-		sched:        opts.Scheduler,
-		leader:       opts.Leader,
-		registry:     opts.Registry,
-		capabilities: opts.Capabilities,
-		backends:     opts.Backends,
-		policy:       opts.Policy,
-		log:          opts.Logger,
-		now:          opts.Now,
-		rng:          opts.Rand,
-		claimPoll:    opts.ClaimPoll,
-		drainTimeout: opts.DrainTimeout,
+	if opts.Metrics == nil {
+		opts.Metrics = metrics.New(prometheus.NewRegistry())
 	}
+	if opts.RetentionInterval == 0 {
+		opts.RetentionInterval = DefaultRetentionInterval
+	}
+	if opts.RetentionBatch == 0 {
+		opts.RetentionBatch = DefaultRetentionBatch
+	}
+	w := &Worker{
+		store:             opts.Store,
+		sched:             opts.Scheduler,
+		leader:            opts.Leader,
+		registry:          opts.Registry,
+		capabilities:      opts.Capabilities,
+		backends:          opts.Backends,
+		policy:            opts.Policy,
+		log:               opts.Logger,
+		metrics:           opts.Metrics,
+		now:               opts.Now,
+		rng:               opts.Rand,
+		claimPoll:         opts.ClaimPoll,
+		drainTimeout:      opts.DrainTimeout,
+		retentionInterval: opts.RetentionInterval,
+		retentionBatch:    opts.RetentionBatch,
+	}
+	w.leader.SetMetrics(w.metrics)
+	w.sched.SetMetrics(w.metrics)
+	return w
 }
 
 // Run acquires leadership (standing by while another worker is active),
@@ -127,6 +155,21 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 	w.log.Info("worker active", "worker_id", w.leader.WorkerID())
 	defer w.leader.Release()
+
+	// Maintenance loops run while this process is the active worker; they
+	// terminate on shutdown and never touch running tasks.
+	maintenanceCtx, cancelMaintenance := context.WithCancel(ctx)
+	defer cancelMaintenance()
+	stats := &QueueStatsLoop{Store: w.store, Metrics: w.metrics, Log: w.log}
+	go stats.Run(maintenanceCtx)
+	if w.retentionInterval > 0 {
+		job := &RetentionJob{
+			Store: w.store, Metrics: w.metrics, Log: w.log,
+			Interval: w.retentionInterval, Batch: w.retentionBatch,
+		}
+		go job.Run(maintenanceCtx)
+	}
+
 	return w.loop(ctx)
 }
 

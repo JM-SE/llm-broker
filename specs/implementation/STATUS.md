@@ -2,11 +2,12 @@
 
 ## Current Gate
 
-- Current phase: P07, Worker and Recovery.
+- Current phase: P08, Security, Privacy, and Observability.
 - State: `ready_for_review`.
-- Previous phases: P00 through P06 accepted.
-- Git policy: initialized on `main`; no automatic commits (changes are left for
-  manual review and user commits).
+- Previous phases: P00 through P07 accepted.
+- Git policy: no automatic commits; P07 was committed by the assistant on
+  explicit user request, otherwise changes are left for manual review and
+  user commits.
 
 ## Product Track
 
@@ -19,8 +20,8 @@
 | P04 | `accepted` | approved |
 | P05 | `accepted` | approved |
 | P06 | `accepted` | approved |
-| P07 | `ready_for_review` | P06 accepted |
-| P08 | `blocked` | requires P07 |
+| P07 | `accepted` | approved |
+| P08 | `ready_for_review` | P07 accepted |
 | P09 | `blocked` | requires P08 |
 
 ## Integration Track
@@ -88,11 +89,12 @@
 - Product P05: accepted (scheduler, aging, affinity batches, leadership,
   single claim path).
 - Product P06: accepted (backend adapters, registry, deterministic fake,
-- Product P07: ready for review (worker and recovery, serial execution,
-  persisted backoff, cancel semantics, ambiguous recovery CLI).
   OpenAI-compatible mapping, conformance suite).
+- Product P07: accepted (worker and recovery, serial execution, persisted
+  backoff, cancel semantics, ambiguous recovery CLI).
+- Product P08: ready for review (bounded metrics, sanitized event logging,
+  retention job, threat model, restore rehearsal).
 
 ## Suggested Commit Message
 
-`feat: P06 backend adapters (registry, deterministic fake, OpenAI-compatible mapping, conformance suite)`
-- Suggested commit message: `feat: P07 worker and recovery (serial execution, persisted backoff, cancel semantics, ambiguous recovery, CLI status/resolve)`
+`feat: P08 security, privacy, and observability (bounded metrics, sanitized events, retention job, threat model, restore rehearsal)`

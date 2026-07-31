@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JM-SE/llm-broker/internal/metrics"
 	"github.com/JM-SE/llm-broker/internal/store/postgres"
 )
 
@@ -22,10 +23,11 @@ type ClaimResult struct {
 // to run without current leadership. Only this type may move tasks from
 // queued to running in the product.
 type Scheduler struct {
-	store  *postgres.Store
-	policy Policy
-	leader *Leader
-	now    func() time.Time
+	store   *postgres.Store
+	policy  Policy
+	leader  *Leader
+	now     func() time.Time
+	metrics *metrics.Metrics
 
 	mu    sync.Mutex // serializes claim+batch state transitions
 	batch AffinityState
@@ -38,6 +40,9 @@ func New(store *postgres.Store, policy Policy, leader *Leader) *Scheduler {
 	}
 	return &Scheduler{store: store, policy: policy, leader: leader, now: time.Now}
 }
+
+// SetMetrics attaches the instrumentation surface (nil-safe).
+func (s *Scheduler) SetMetrics(m *metrics.Metrics) { s.metrics = m }
 
 // ClaimNext claims the single best eligible task under current leadership:
 // highest effective priority (class base + bounded aging), then FIFO by
@@ -61,5 +66,8 @@ func (s *Scheduler) ClaimNext(ctx context.Context) (ClaimResult, error) {
 	}
 	dec := s.batch.Consider(ct.Capability, ct.EffectivePriority,
 		s.policy.BatchSize, s.policy.BatchMaxAge, s.now())
+	if s.metrics != nil {
+		s.metrics.IncDecision(dec.Reason)
+	}
 	return ClaimResult{Task: ct.TaskWithPayload, Decision: dec}, nil
 }

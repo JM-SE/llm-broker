@@ -6,8 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/JM-SE/llm-broker/internal/auth"
 	"github.com/JM-SE/llm-broker/internal/config"
+	"github.com/JM-SE/llm-broker/internal/metrics"
 	"github.com/JM-SE/llm-broker/internal/store/postgres"
 )
 
@@ -26,24 +30,31 @@ type Server struct {
 	cfg      *config.Config
 	verifier *auth.Verifier
 	log      *slog.Logger
+	metrics  *metrics.Metrics
+	reg      *prometheus.Registry
 }
 
-// New builds a server. Logger defaults to slog.Default when nil.
+// New builds a server with its own in-process metrics registry. Logger
+// defaults to slog.Default when nil.
 func New(opts Options) *Server {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	reg := prometheus.NewRegistry()
 	return &Server{
 		store:    opts.Store,
 		cfg:      opts.Config,
 		verifier: opts.Verifier,
 		log:      opts.Logger,
+		metrics:  metrics.New(reg),
+		reg:      reg,
 	}
 }
 
 // Handler returns the routed handler with the full middleware chain:
 // request id, panic recovery, sanitized request logging, then per-route
-// authentication.
+// authentication. GET /metrics is exposed only when the operator enables
+// api.metrics_enabled in the configuration.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
@@ -52,7 +63,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/tasks/{task_id}", s.requireAuth(http.HandlerFunc(s.handleGetTask)))
 	mux.Handle("GET /v1/tasks/{task_id}/result", s.requireAuth(http.HandlerFunc(s.handleGetResult)))
 	mux.Handle("POST /v1/tasks/{task_id}/cancel", s.requireAuth(http.HandlerFunc(s.handleCancelTask)))
-	return requestID(recoverPanic(logRequests(mux, s.log), s.log))
+	if s.cfg.API.MetricsEnabled {
+		mux.Handle("GET /metrics", promhttp.HandlerFor(s.reg, promhttp.HandlerOpts{}))
+	}
+	return requestID(recoverPanic(logRequests(mux, s.log, s.metrics), s.log))
 }
 
 // lookupClient adapts the store to the auth verifier. Unknown identifiers

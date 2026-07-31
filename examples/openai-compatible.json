@@ -1,7 +1,8 @@
 {
   "version": 1,
   "api": {
-    "listen": "127.0.0.1:8010"
+    "listen": "127.0.0.1:8010",
+    "metrics_enabled": true
   },
   "database": {
     "url_env": "LLM_BROKER_DATABASE_URL",

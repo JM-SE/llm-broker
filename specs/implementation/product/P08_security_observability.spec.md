@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P08.
-- State: `pending`.
+- State: `ready_for_review`.
 - Prerequisite: accepted P07.
 - Runtime impact: isolated test deployment only.
 
@@ -109,6 +109,66 @@ bounded operation, diagnosis, retention, and backup/restore.
 
 ## Handoff
 
-Include threat-model changes, leak/cardinality/load/fault evidence, retention and
-restore transcript, scan results, changed files, Git status, and a suggested
-commit message. Stop for approval before P09.
+### Changed Files
+
+- `internal/metrics/`: bounded-label instrumentation — `metrics.go` plus
+  tests (nil-safety, registry names, fixed label vocabulary).
+- `internal/api/`: `routes.go` (stable route labels), middleware
+  instrumentation (requests/duration/auth failures), `GET /metrics` served
+  only with `api.metrics_enabled` (own in-process registry, promhttp),
+  readiness gauge; logs now emit stable `event` + `route` labels and never
+  raw paths.
+- `internal/scheduler/`: `SetMetrics` on scheduler and leader; decision
+  counters and leadership gauge.
+- `internal/worker/`: metrics wiring (inference attempt classes), retention
+  job (`retention.go`: bounded sweeps, aggregate counts, restart-safe),
+  queue-gauge refresh loop; `p08_test.go` (load burst with one active
+  inference; unreachable-backend retry-then-fail with worker survival).
+- `internal/store/postgres/`: `stats.go` (QueueStats); cleanup test that
+  queued payloads are never purged.
+- `internal/config/config.go`: `api.metrics_enabled` (opt-in, default off);
+  examples updated and validated.
+- `docs/security.md`, `docs/observability.md`, `docs/operations.md`:
+  threat model, data inventory, trust boundaries, residual risks, metrics
+  catalog, retention/backup/upgrade/fault procedures.
+- `scripts/restore-rehearsal.sh`: dump/restore rehearsal against the
+  disposable test database.
+- `go.mod`/`go.sum`: added `prometheus/client_golang` v1.24.1.
+- `specs/.../STATUS.md` and this spec: state updated.
+
+### Validation Evidence
+
+- `go test -p 1 ./... -count=1` and `go test -race -p 1 ./... -count=1`:
+  all 14 packages green (shared disposable DB).
+- Leak/cardinality: `/metrics` scrape contains no token, idempotency key,
+  prompt, client name, or task identifier; request counter series bounded
+  under 5 distinct clients (<= 16 series).
+- Logs: canary values absent; route labels replace raw paths.
+- Load: 30-task burst through one fake backend completes serially
+  (queue drains, running stays 0/1).
+- Fault: unreachable backend classified `transient_unsent`, retried once
+  with persisted backoff, failed terminally; worker remained healthy.
+- Retention: queued payload survives aging beyond all windows; bounded
+  batches and idempotency survival re-verified (P03 suite).
+- Restore rehearsal: dump/restore into fresh DB preserved migration
+  version 3 and 48 tasks across states.
+- `govulncheck ./...`: no vulnerabilities found.
+- `go vet ./...`, `gofmt -l .` (empty), `go build ./...`, `go mod tidy`,
+  `go mod verify`, `git diff --check`: clean.
+
+### Compatibility Questions
+
+- `/metrics` is opt-in and operator-controlled; the openapi document
+  already declares the endpoint without authentication, matching the
+  loopback-only posture.
+- Retention cadence (10 min) and batch (1000) are fixed defaults; the
+  sweep derives cutoffs from per-workload policy rows, so operators tune
+  retention via SQL without code changes.
+- Logs switched from raw `path` to stable `route` labels (task identifiers
+  removed from API logs); any log parser must follow the new field.
+
+### Suggested Commit Message
+
+`feat: P08 security, privacy, and observability (bounded metrics, sanitized events, retention job, threat model, restore rehearsal)`
+
+Stop for approval before P09.

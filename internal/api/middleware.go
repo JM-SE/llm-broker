@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/JM-SE/llm-broker/internal/auth"
+	"github.com/JM-SE/llm-broker/internal/metrics"
 )
 
 // context keys for per-request state.
@@ -55,8 +57,9 @@ func recoverPanic(next http.Handler, log *slog.Logger) http.Handler {
 		defer func() {
 			if rec := recover(); rec != nil {
 				log.Error("panic recovered",
+					"event", "panic",
 					"request_id", requestIDFrom(r.Context()),
-					"path", r.URL.Path,
+					"route", routeLabel(r),
 					"panic", fmt.Sprint(rec))
 				writeProblem(w, http.StatusInternalServerError, codeInternal,
 					"internal error", "the request could not be completed")
@@ -77,20 +80,25 @@ func (w *statusWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
-// logRequests records sanitized request metadata only: method, path, status,
-// duration, and correlation id. Request bodies, credentials, headers, and
+// logRequests records sanitized request metadata only: route, method, status,
+// duration, and correlation id. Route labels are stable names (see
+// routeLabel); request bodies, credentials, headers, task identifiers, and
 // query values are never logged.
-func logRequests(next http.Handler, log *slog.Logger) http.Handler {
+func logRequests(next http.Handler, log *slog.Logger, m *metrics.Metrics) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
+		route := routeLabel(r)
 		log.Info("request",
+			"event", "request",
 			"request_id", requestIDFrom(r.Context()),
 			"method", r.Method,
-			"path", r.URL.Path,
+			"route", route,
 			"status", sw.status,
 			"duration_ms", time.Since(start).Milliseconds())
+		m.IncRequest(r.Method, route, strconv.Itoa(sw.status))
+		m.ObserveRequestDuration(r.Method, route, time.Since(start).Seconds())
 	})
 }
 
@@ -100,6 +108,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fields := strings.Fields(r.Header.Get("Authorization"))
 		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+			s.metrics.IncAuthFailure(metrics.AuthReasonMissing)
 			writeProblem(w, http.StatusUnauthorized, codeUnauthorized,
 				"authentication required", "a bearer credential is required")
 			return
@@ -107,6 +116,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		ident, err := s.verifier.Verify(r.Context(), fields[1])
 		if err != nil {
 			if errors.Is(err, auth.ErrMalformedToken) || errors.Is(err, auth.ErrInvalidToken) {
+				s.metrics.IncAuthFailure(metrics.AuthReasonInvalid)
 				writeProblem(w, http.StatusUnauthorized, codeUnauthorized,
 					"authentication failed", "invalid credential")
 				return
