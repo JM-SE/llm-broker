@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P02.
-- State: `pending`.
+- State: `ready_for_review`.
 - Prerequisite: accepted P01.
 - Runtime impact: none; no operational listener or worker.
 
@@ -106,6 +106,51 @@ task contracts, feature declarations, and OpenAPI before persistence.
 
 ## Handoff
 
-Include contract examples, validation limits, test/fuzz evidence, dependency
-changes, Git status, compatibility questions, and a suggested commit message.
+### Changed Files
+
+- `internal/domain/`: provider-independent types and validation — `limits.go`,
+  `slug.go`, `state.go`, `errors.go`, `priority.go`, `message.go`,
+  `generation.go`, `response.go`, `schema_compile.go`, `trace.go`,
+  `submission.go`, `result.go` plus unit/fuzz tests.
+- `internal/config/`: strict versioned loader — `config.go`, `load.go`,
+  `validate.go`, `redact.go` plus unit/fuzz tests.
+- `internal/backend/`: adapter and optional runtime-controller contracts —
+  `backend.go` plus compile-time contract tests.
+- `cmd/llm-broker/`: `config.go` with `config validate` and redacted
+  `config show`; `main.go` and `main_test.go` updated.
+- `openapi.yaml`: OpenAPI 3.1 client contract (health/ready/metrics, tasks,
+  results, cancel, stable problem codes).
+- `examples/fake.json` and `examples/openai-compatible.json`: sanitized
+  operator configurations.
+- `tests/openapi_test.go`: document-level OpenAPI checks.
+- `go.mod`/`go.sum`: added `santhosh-tekuri/jsonschema/v6` v6.0.2 and
+  `getkin/kin-openapi` v0.145.0 (test-only).
+- `specs/.../STATUS.md` and this spec: state updated.
+
+### Validation Evidence
+
+- `go test ./...`: all packages pass.
+- `go test -race ./...`: all packages pass.
+- `go vet ./...`, `go build ./...`, `gofmt -l .` (empty): clean.
+- `go mod verify`: all modules verified; `go mod tidy` stable.
+- Fuzz (5s each): `FuzzDecodeTaskSubmission` (425k execs),
+  `FuzzNewSchemaContract` (325k), `FuzzDecode` (380k) — no crashes.
+- Product scan: no integration/vendor/local identifiers in product source.
+- Manual: `config validate` and redacted `config show` verified against both
+  example configs.
+
+### Compatibility Questions
+
+- Aging is class-aware: batch may rise to 400 (base 100 + capped 300), normal
+  is capped at 300 (never exceeds the high base), high never ages. If a
+  different aging curve is wanted for the operator high class, adjust
+  `EffectivePriority` before P05.
+- kin-openapi does not evaluate `if/then/else` against instances; the
+  kind/schema rule of `ResponseContract` is pinned structurally in the OpenAPI
+  document and will be enforced behaviorally by the API layer in P04.
+
+### Suggested Commit Message
+
+`feat: P02 generic contracts and configuration (domain, config, backend interfaces, OpenAPI, examples)`
+
 Stop for approval before P03.

@@ -40,3 +40,6 @@ compose.override.yaml
 
 # Goose migration status (database-specific)
 migrations/status/
+
+# CodeGraph local index
+.codegraph/

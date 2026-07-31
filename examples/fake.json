@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "api": {
+    "listen": "127.0.0.1:8010"
+  },
+  "database": {
+    "url_env": "LLM_BROKER_DATABASE_URL"
+  },
+  "retention": {
+    "payload": "1h",
+    "result": "168h",
+    "metadata": "720h"
+  },
+  "backends": {
+    "fake": {
+      "type": "fake",
+      "delay": "250ms"
+    }
+  },
+  "capabilities": {
+    "instruct": {
+      "backend": "fake"
+    }
+  },
+  "workloads": {
+    "default": {
+      "priority_class": "normal"
+    }
+  }
+}

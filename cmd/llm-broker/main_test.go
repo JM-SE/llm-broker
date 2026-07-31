@@ -41,7 +41,7 @@ func TestNoArgs(t *testing.T) {
 }
 
 func TestPlaceholderCommands(t *testing.T) {
-	for _, cmd := range []string{"api", "worker", "migrate", "client", "config"} {
+	for _, cmd := range []string{"api", "worker", "migrate", "client"} {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{"llm-broker", cmd}, &stdout, &stderr)
 		if code != exitNotImplemented {

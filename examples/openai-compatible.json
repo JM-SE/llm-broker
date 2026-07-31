@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "api": {
+    "listen": "127.0.0.1:8010"
+  },
+  "database": {
+    "url_env": "LLM_BROKER_DATABASE_URL",
+    "max_connections": 10
+  },
+  "retention": {
+    "payload": "1h",
+    "result": "168h",
+    "metadata": "720h"
+  },
+  "backends": {
+    "primary": {
+      "type": "openai_compatible",
+      "base_url": "http://llm-runtime.example:8080/v1",
+      "model": "operator-model-alias",
+      "credential_env": "LLM_BACKEND_API_KEY",
+      "features": ["structured_output"]
+    }
+  },
+  "capabilities": {
+    "instruct": {
+      "backend": "primary"
+    }
+  },
+  "workloads": {
+    "default": {
+      "priority_class": "normal",
+      "max_active_tasks": 250,
+      "max_attempts": 3,
+      "retry_delays_seconds": [1, 5],
+      "max_output_tokens": 2048,
+      "allowed_generation": {
+        "max_tokens": { "max": 2048 },
+        "temperature": { "min": 0, "max": 2 },
+        "top_p": { "min": 0, "max": 1 },
+        "top_k": { "min": 1, "max": 100 },
+        "min_p": { "min": 0, "max": 1 }
+      },
+      "required_features": []
+    }
+  }
+}

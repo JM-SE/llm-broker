@@ -49,8 +49,7 @@ func run(_ context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "llm-broker client: not implemented")
 		return exitNotImplemented
 	case "config":
-		fmt.Fprintln(stderr, "llm-broker config: not implemented")
-		return exitNotImplemented
+		return runConfig(args[2:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n\n", cmd)
 		printUsageTo(stderr)
@@ -75,6 +74,11 @@ commands:
   client    manage API credentials and workload grants
   config    validate or inspect configuration
   version   print version and build information
+
+config:
+  llm-broker config validate [path]
+  llm-broker config show [path]
+    path defaults to $LLM_BROKER_CONFIG_FILE
 
 `)
 }

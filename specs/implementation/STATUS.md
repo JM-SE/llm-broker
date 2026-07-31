@@ -3,7 +3,7 @@
 ## Current Gate
 
 - Current phase: P02, Generic Contracts and Configuration.
-- State: `blocked`, pending P02 start.
+- State: `ready_for_review`.
 - Previous phases: P00 and P01 accepted.
 - Git policy: initialized on `main`; no automatic commits.
 
@@ -13,7 +13,7 @@
 | --- | --- | --- |
 | P00 | `accepted` | approved |
 | P01 | `accepted` | approved |
-| P02 | `pending` | P01 accepted |
+| P02 | `ready_for_review` | P01 accepted |
 | P03 | `blocked` | requires P02 |
 | P04 | `blocked` | requires P03 |
 | P05 | `blocked` | requires P04 |
@@ -78,7 +78,9 @@
 - Initial host-specific Phase 00: superseded before approval.
 - Generic Product P00: accepted.
 - Product P01: accepted.
+- Product P02: ready for review (contracts, configuration, backend interfaces,
+  OpenAPI).
 
 ## Suggested Commit Message
 
-`docs: define generic broker product and integration phases`
+`feat: P02 generic contracts and configuration (domain, config, backend interfaces, OpenAPI, examples)`
