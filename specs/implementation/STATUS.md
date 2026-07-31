@@ -2,9 +2,9 @@
 
 ## Current Gate
 
-- Current phase: P01, OSS and Go Foundation.
-- State: `ready_for_review`.
-- Previous phase: P00 accepted.
+- Current phase: P02, Generic Contracts and Configuration.
+- State: `blocked`, pending P02 start.
+- Previous phases: P00 and P01 accepted.
 - Git policy: initialized on `main`; no automatic commits.
 
 ## Product Track
@@ -12,8 +12,8 @@
 | Phase | State | Approval |
 | --- | --- | --- |
 | P00 | `accepted` | approved |
-| P01 | `ready_for_review` | pending |
-| P02 | `blocked` | requires P01 |
+| P01 | `accepted` | approved |
+| P02 | `pending` | P01 accepted |
 | P03 | `blocked` | requires P02 |
 | P04 | `blocked` | requires P03 |
 | P05 | `blocked` | requires P04 |
@@ -77,7 +77,7 @@
 
 - Initial host-specific Phase 00: superseded before approval.
 - Generic Product P00: accepted.
-- Product P01: in progress.
+- Product P01: accepted.
 
 ## Suggested Commit Message
 

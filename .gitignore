@@ -1,5 +1,5 @@
 # Binaries
-llm-broker
+/llm-broker
 
 # Test binary
 *.test

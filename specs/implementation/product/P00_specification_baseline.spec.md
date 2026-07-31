@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P00.
-- State: `ready_for_review`.
+- State: `accepted`.
 - Runtime impact: none.
 - Approval required before P01.
 
