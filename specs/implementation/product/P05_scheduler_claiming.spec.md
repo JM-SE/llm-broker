@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P05.
-- State: `pending`.
+- State: `ready_for_review`.
 - Prerequisite: accepted P04.
 - Runtime impact: isolated PostgreSQL tests only; no backend inference.
 
@@ -98,6 +98,69 @@ backend affinity, global worker leadership, atomic claims, and leases.
 
 ## Handoff
 
-Include policy fixture outputs, concurrency/leadership evidence, SQL plan notes,
-changed files, Git status, and a suggested commit message. Stop for approval
-before P06.
+### Changed Files
+
+- `internal/scheduler/`: broker-owned policy and selection — `policy.go`
+  (Policy defaults: 60s lease, 4-task/10-minute batches, 10s heartbeat;
+  EffectivePriority delegates to the domain function), `batch.go`
+  (AffinityState + sanitized Decision diagnostics), `select.go` (eligible
+  selection SQL generated from the same domain constants as the pure
+  policy), `leadership.go` (Leader: session advisory lock on a dedicated
+  connection, active/stopped heartbeats, lock loss stops claims),
+  `scheduler.go` (single ClaimNext path, mutex-guarded, refuses without
+  leadership).
+- `internal/store/postgres/tasks.go`: extracted the single claim
+  transaction into `claimSelect`; added `ClaimNextByPolicy` (scheduler-owned
+  query, claims with grants/attempts eligibility) and `ClaimedTask` with the
+  SQL-computed `EffectivePriority`; `ClaimNextQueued` (FIFO) kept as the
+  policy-free store baseline for tests.
+- Tests: `internal/scheduler/policy_test.go` (pure boundaries),
+  `batch_test.go` (state machine), `harness_test.go` (integration harness on
+  the disposable DB), `leadership_test.go` (one leader, standby never
+  claims, lock loss, reacquire, heartbeat lifecycle),
+  `scheduler_test.go` (class order, aging caps, tie-break, eligibility,
+  concurrency, serial across capabilities, affinity, SQL-vs-domain
+  conformance matrix).
+- `docs/scheduler.md`: policy, ordering, batches, leadership, single claim
+  path.
+- `.github/workflows/ci.yaml` and `docs/database.md`: integration test
+  binaries must run serially (`go test -p 1 ./...`) because the package
+  harnesses share one disposable database and reset its schema.
+- `specs/.../STATUS.md` and this spec: state updated.
+
+### Validation Evidence
+
+- `go test -p 1 ./... -count=1` and `go test -race -p 1 ./... -count=1`:
+  all packages pass (three integration harnesses coexist serially).
+- `go vet ./...`, `go build ./...`, `gofmt -l .` (empty), `git diff --check`
+  (clean).
+- Leadership: two leaders contend; exactly one acquires; standby claims are
+  refused with `ErrNotLeader`; forced release stops claims immediately and
+  allows reacquire; heartbeat transitions active → stopped.
+- Concurrency: six concurrent claimers over five tasks claim each task
+  exactly once; claims stay serial across different capabilities.
+- Conformance: SQL-computed effective priority equals the domain function
+  for classes high/normal/batch across ages 0/600/1800/3600/7200 seconds
+  (including per-class caps: batch reaches 400, normal caps at 300, high
+  never ages).
+- Aging: an aged batch task (400) outranks a fresh high (300); a fresh
+  normal (200) comes last in that fixture.
+
+### Compatibility Questions
+
+- `go test ./...` without `-p 1` is flaky by design: the shared test DB is
+  reset per package harness, so package binaries must run serially. CI and
+  docs encode `-p 1`.
+- The eligibility query requires a current workload grant at claim time: a
+  revoked grant stalls the queued tasks of that client until re-granted
+  (intended: grants gate admission).
+- The API `/ready` still checks only database/schema state; worker
+  heartbeat/lock readiness joins in P07 (worker execution phase).
+- `Decision` diagnostics carry capability slugs and priorities only; they
+  are log-bound and will feed sanitized metrics in P08.
+
+### Suggested Commit Message
+
+`feat: P05 scheduler and claiming (policy ordering, aging, affinity batches, leadership, single claim path)`
+
+Stop for approval before P06.

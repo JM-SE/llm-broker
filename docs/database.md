@@ -104,3 +104,7 @@ The integration suite runs against a disposable, dedicated container
 55432. It is created fresh per run: schema reset, migrations applied, roles
 recreated, and destroyed after evidence is captured. Never point the test
 harness at a database that contains real data.
+
+Each package test harness resets the schema, so package test binaries must
+run serially: use `go test -p 1 ./...` (also set in CI). Parallel package
+execution would race the shared schema resets.

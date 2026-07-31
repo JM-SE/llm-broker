@@ -2,9 +2,9 @@
 
 ## Current Gate
 
-- Current phase: P04, API, Authentication, and Idempotency.
+- Current phase: P05, Scheduler and Claiming.
 - State: `ready_for_review`.
-- Previous phases: P00, P01, P02, and P03 accepted.
+- Previous phases: P00, P01, P02, P03, and P04 accepted.
 - Git policy: initialized on `main`; no automatic commits (changes are left for
   manual review and user commits).
 
@@ -16,8 +16,8 @@
 | P01 | `accepted` | approved |
 | P02 | `accepted` | approved |
 | P03 | `accepted` | approved |
-| P04 | `ready_for_review` | P03 accepted |
-| P05 | `blocked` | requires P04 |
+| P04 | `accepted` | approved |
+| P05 | `ready_for_review` | P04 accepted |
 | P06 | `blocked` | requires P05 |
 | P07 | `blocked` | requires P06 |
 | P08 | `blocked` | requires P07 |
@@ -83,6 +83,10 @@
   OpenAPI).
 - Product P03: accepted (PostgreSQL persistence, migrations, store,
   integration tests).
+- Product P04: accepted (API, authentication, idempotency, bounded wait,
+  cancel intent).
+- Product P05: ready for review (scheduler policy, aging, affinity batches,
+  leadership, single claim path).
 - Product P04: ready for review (HTTP API, bearer authentication, bounded
   wait, cancellation intent).
 - Product P03: ready for review (PostgreSQL persistence, migrations, store,
@@ -90,4 +94,4 @@
 
 ## Suggested Commit Message
 
-`feat: P04 API, authentication, and idempotency (HTTP surface, bearer credentials, bounded wait, cancel intent)`
+`feat: P05 scheduler and claiming (policy ordering, aging, affinity batches, leadership, single claim path)`

@@ -18,7 +18,10 @@ jobs:
       - name: format
         run: diff -u <(echo -n) <(gofmt -d .)
       - name: test
-        run: go test -race ./...
+        # -p 1 serializes package test binaries: the PostgreSQL integration
+        # harnesses share one disposable database and reset its schema per
+        # package, so parallel package execution would race.
+        run: go test -race -p 1 ./...
       - name: vet
         run: go vet ./...
       - name: build

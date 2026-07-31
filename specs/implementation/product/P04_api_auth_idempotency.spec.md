@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P04.
-- State: `ready_for_review`.
+- State: `accepted`.
 - Prerequisite: accepted P03.
 - Runtime impact: isolated test API only; no worker or real backend.
 

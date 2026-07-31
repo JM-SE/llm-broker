@@ -293,32 +293,65 @@ func (s *Store) RenewTaskLease(ctx context.Context, taskID uuid.UUID, duration t
 	return fmt.Errorf("%w: task %s is %s, not running", ErrInvalidTransition, taskID, cur.State)
 }
 
-// ClaimNextQueued atomically claims the oldest queued task, records the
-// attempt with its claiming worker, and returns the task with its payload.
-// Row locking (FOR UPDATE SKIP LOCKED) guarantees each task is claimed exactly
-// once even across concurrent workers. Ordering is FIFO by creation; the
-// scheduler phase (P05) supplies the priority/aging/affinity ordering.
+// ClaimedTask is a successfully claimed task together with the scheduler's
+// effective priority that selected it (0 on the FIFO claim path).
+type ClaimedTask struct {
+	TaskWithPayload
+	EffectivePriority int
+}
+
+// ClaimNextQueued atomically claims the oldest queued task (FIFO), records
+// the attempt with its claiming worker, and returns the task with its
+// payload. Row locking (FOR UPDATE SKIP LOCKED) guarantees each task is
+// claimed exactly once even across concurrent workers. This policy-free
+// primitive is the base order; the scheduler policy ordering lives in
+// ClaimNextByPolicy.
 func (s *Store) ClaimNextQueued(ctx context.Context, workerID uuid.UUID, lease time.Duration) (TaskWithPayload, error) {
+	ct, err := s.claimSelect(ctx, workerID, lease, `
+		SELECT t.id, t.client_id, t.workload_id, t.capability, t.idempotency_key,
+		       t.request_hash, t.state, t.attempts, t.lease_until, t.started_at,
+		       t.finished_at, t.cancel_requested_at, t.created_at, t.updated_at,
+		       p.payload, 0::int AS effective_priority
+		FROM tasks t
+		JOIN task_payloads p ON p.task_id = t.id
+		WHERE t.state = 'queued'
+		ORDER BY t.created_at, t.id
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1`)
+	if err != nil {
+		return TaskWithPayload{}, err
+	}
+	return ct.TaskWithPayload, nil
+}
+
+// ClaimNextByPolicy claims the single best eligible task under the
+// broker-owned policy ordering. The query is built by the scheduler package
+// (the policy lives there); it must select the same 16 columns as
+// claimSelect plus an effective_priority integer, ordered, and terminated
+// with FOR UPDATE SKIP LOCKED LIMIT 1. Eligibility (state, attempts, grants)
+// is part of the query so SQL and pure policy cannot disagree.
+func (s *Store) ClaimNextByPolicy(ctx context.Context, workerID uuid.UUID, lease time.Duration, query string) (ClaimedTask, error) {
+	return s.claimSelect(ctx, workerID, lease, query)
+}
+
+// claimSelect is the single claim transaction: select exactly one eligible
+// row (FOR UPDATE SKIP LOCKED), flip it to running with a fresh attempt
+// number and lease, and record the attempt row. Every claim in the product
+// flows through here.
+func (s *Store) claimSelect(ctx context.Context, workerID uuid.UUID, lease time.Duration, query string, args ...any) (ClaimedTask, error) {
 	if lease <= 0 {
 		lease = defaultLease
 	}
-	var claimed TaskWithPayload
+	var claimed ClaimedTask
 	err := s.withTx(ctx, func(tx pgx.Tx) error {
 		var t Task
 		var payload []byte
-		err := tx.QueryRow(ctx, `
-			SELECT t.id, t.client_id, t.workload_id, t.capability, t.idempotency_key,
-			       t.request_hash, t.state, t.attempts, t.lease_until, t.started_at,
-			       t.finished_at, t.cancel_requested_at, t.created_at, t.updated_at, p.payload
-			FROM tasks t
-			JOIN task_payloads p ON p.task_id = t.id
-			WHERE t.state = 'queued'
-			ORDER BY t.created_at, t.id
-			FOR UPDATE SKIP LOCKED
-			LIMIT 1`,
-		).Scan(&t.ID, &t.ClientID, &t.WorkloadID, &t.Capability, &t.IdempotencyKey,
+		var effective int
+		err := tx.QueryRow(ctx, query, args...).Scan(
+			&t.ID, &t.ClientID, &t.WorkloadID, &t.Capability, &t.IdempotencyKey,
 			&t.RequestHash, &t.State, &t.Attempts, &t.LeaseUntil, &t.StartedAt,
-			&t.FinishedAt, &t.CancelRequestedAt, &t.CreatedAt, &t.UpdatedAt, &payload)
+			&t.FinishedAt, &t.CancelRequestedAt, &t.CreatedAt, &t.UpdatedAt,
+			&payload, &effective)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNoTaskAvailable
 		}
@@ -351,7 +384,10 @@ func (s *Store) ClaimNextQueued(ctx context.Context, workerID uuid.UUID, lease t
 		t.StartedAt = &now
 		leaseUntil := now.Add(lease)
 		t.LeaseUntil = &leaseUntil
-		claimed = TaskWithPayload{Task: t, Payload: payload}
+		claimed = ClaimedTask{
+			TaskWithPayload:   TaskWithPayload{Task: t, Payload: payload},
+			EffectivePriority: effective,
+		}
 		return nil
 	})
 	return claimed, err
