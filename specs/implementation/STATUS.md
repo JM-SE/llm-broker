@@ -1,0 +1,84 @@
+# Implementation Status
+
+## Current Gate
+
+- Current phase: P01, OSS and Go Foundation.
+- State: `ready_for_review`.
+- Previous phase: P00 accepted.
+- Git policy: initialized on `main`; no automatic commits.
+
+## Product Track
+
+| Phase | State | Approval |
+| --- | --- | --- |
+| P00 | `accepted` | approved |
+| P01 | `ready_for_review` | pending |
+| P02 | `blocked` | requires P01 |
+| P03 | `blocked` | requires P02 |
+| P04 | `blocked` | requires P03 |
+| P05 | `blocked` | requires P04 |
+| P06 | `blocked` | requires P05 |
+| P07 | `blocked` | requires P06 |
+| P08 | `blocked` | requires P07 |
+| P09 | `blocked` | requires P08 |
+
+## Integration Track
+
+| Phase | State | Approval |
+| --- | --- | --- |
+| L00 | `blocked` | requires accepted P09 |
+| L01 | `blocked` | requires L00 |
+| L02 | `blocked` | requires L01 and maintenance approval |
+| L03 | `blocked` | requires L02 and cutover approval |
+| L04 | `blocked` | requires L03 and soak approval |
+
+## P00 Scope Record
+
+- Replaced the superseded host-coupled 00-13 plan with product P00-P09 and
+  integration L00-L04 tracks.
+- Defined public v1 as generic Go/PostgreSQL infrastructure.
+- Defined built-in `fake` and `openai_compatible` adapters and compiled extension
+  contract.
+- Separated optional runtime control from inference protocol adapters.
+- Kept exactly one global inference as a public v1 invariant.
+- Made capabilities, workloads, backend instances, and model aliases operator
+  configuration.
+- Isolated llama-swap, Qwen, local-host deployment, and YTPipe in sanitized
+  integration phases.
+- Made product completion independent from all integration phases.
+
+## P00 Runtime Record
+
+- No Go source or dependency was created.
+- No database/container/service was created or modified.
+- No systemd unit, runtime, listener, model, or client was changed.
+- No inference/network request was made.
+- No Git commit, tag, remote, or staging action was performed.
+
+## Validation Evidence
+
+- Documentation set: 18 files and 2424 lines at validation.
+- Phase set: exactly P00-P09 and L00-L04; all 15 index references resolve.
+- Structure: every phase has status, objective, prerequisite/precondition, scope,
+  exclusions, deliverables, procedure, automated/manual acceptance, stop
+  conditions, and handoff.
+- State: one phase is `ready_for_review`; fourteen phases are `pending` and
+  blocked by the index gates.
+- Sanitization: no personal home path, known live port, concrete local model
+  filename, local container/database identity, or credential was found.
+- Product isolation: product phase specs contain no llama-swap, Qwen, YTPipe,
+  personal path, or concrete listener reference.
+- Formatting: ASCII-only; no trailing whitespace; `git diff --check` and cached
+  equivalent pass.
+- Repository: only `.git/` and `specs/`; branch `main`; no commits or staging;
+  `specs/` remains untracked for review.
+
+## Approval Log
+
+- Initial host-specific Phase 00: superseded before approval.
+- Generic Product P00: accepted.
+- Product P01: in progress.
+
+## Suggested Commit Message
+
+`docs: define generic broker product and integration phases`
