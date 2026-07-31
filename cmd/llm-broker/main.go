@@ -37,16 +37,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		printUsageTo(stderr)
 		return exitOk
 	case "api":
-		fmt.Fprintln(stderr, "llm-broker api: not implemented")
-		return exitNotImplemented
+		return runAPI(ctx, args[2:], stdout, stderr)
 	case "worker":
 		fmt.Fprintln(stderr, "llm-broker worker: not implemented")
 		return exitNotImplemented
 	case "migrate":
 		return runMigrate(ctx, args[2:], stdout, stderr)
 	case "client":
-		fmt.Fprintln(stderr, "llm-broker client: not implemented")
-		return exitNotImplemented
+		return runClient(ctx, args[2:], stdout, stderr)
 	case "config":
 		return runConfig(args[2:], stdout, stderr)
 	default:
@@ -84,6 +82,17 @@ migrate:
   llm-broker migrate up [path]
     applies embedded SQL migrations; the database URL is read from the
     environment variable configured as database.url_env in the config
+
+api:
+  llm-broker api
+    starts the HTTP API server; configuration comes from $LLM_BROKER_CONFIG_FILE
+
+client:
+  llm-broker client create <name>
+  llm-broker client disable <name>
+  llm-broker client revoke <name>
+  llm-broker client grant <name> <workload>
+    manages API credentials and workload grants; prints credentials once
 
 `)
 }

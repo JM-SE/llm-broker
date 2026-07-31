@@ -10,9 +10,10 @@ import (
 func TestClientCRUD(t *testing.T) {
 	ctx := context.Background()
 	c, err := adminStore.CreateClient(ctx, CreateClientParams{
-		Name:             "crud-client",
-		CredentialDigest: testHash('c'),
-		Enabled:          true,
+		Name:                 "crud-client",
+		CredentialIdentifier: "crudclient01",
+		CredentialDigest:     testHash('c'),
+		Enabled:              true,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -23,6 +24,10 @@ func TestClientCRUD(t *testing.T) {
 	}
 	if got.ID != c.ID || !bytes.Equal(got.CredentialDigest, testHash('c')) || !got.Enabled {
 		t.Errorf("client mismatch: %+v", got)
+	}
+	byID, err := adminStore.GetClientByIdentifier(ctx, "crudclient01")
+	if err != nil || byID.ID != c.ID {
+		t.Errorf("get by identifier: %+v, %v", byID, err)
 	}
 
 	if err := adminStore.SetClientEnabled(ctx, c.ID, false); err != nil {
@@ -38,9 +43,10 @@ func TestClientCRUD(t *testing.T) {
 
 	// Duplicate name conflicts.
 	_, err = adminStore.CreateClient(ctx, CreateClientParams{
-		Name:             "crud-client",
-		CredentialDigest: testHash('d'),
-		Enabled:          true,
+		Name:                 "crud-client",
+		CredentialIdentifier: "crudclient02",
+		CredentialDigest:     testHash('d'),
+		Enabled:              true,
 	})
 	if !errors.Is(err, ErrConflict) {
 		t.Errorf("duplicate client: want ErrConflict, got %v", err)

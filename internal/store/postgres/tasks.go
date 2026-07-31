@@ -17,19 +17,20 @@ import (
 // lives in task_payloads and the output in task_results; both are deliberately
 // separate tables for retention and access control.
 type Task struct {
-	ID             uuid.UUID
-	ClientID       int64
-	WorkloadID     int64
-	Capability     string
-	IdempotencyKey string
-	RequestHash    []byte
-	State          domain.TaskState
-	Attempts       int
-	LeaseUntil     *time.Time
-	StartedAt      *time.Time
-	FinishedAt     *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                uuid.UUID
+	ClientID          int64
+	WorkloadID        int64
+	Capability        string
+	IdempotencyKey    string
+	RequestHash       []byte
+	State             domain.TaskState
+	Attempts          int
+	LeaseUntil        *time.Time
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
+	CancelRequestedAt *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // TaskWithPayload is a claimed or read task together with its normalized
@@ -58,13 +59,14 @@ type CreateTaskResult struct {
 
 const taskColumns = `id, client_id, workload_id, capability, idempotency_key,
 	request_hash, state, attempts, lease_until, started_at, finished_at,
-	created_at, updated_at`
+	cancel_requested_at, created_at, updated_at`
 
 func scanTask(row pgx.Row) (Task, error) {
 	var t Task
 	err := row.Scan(&t.ID, &t.ClientID, &t.WorkloadID, &t.Capability,
 		&t.IdempotencyKey, &t.RequestHash, &t.State, &t.Attempts,
-		&t.LeaseUntil, &t.StartedAt, &t.FinishedAt, &t.CreatedAt, &t.UpdatedAt)
+		&t.LeaseUntil, &t.StartedAt, &t.FinishedAt, &t.CancelRequestedAt,
+		&t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 
@@ -132,20 +134,66 @@ func (s *Store) GetTask(ctx context.Context, taskID uuid.UUID) (Task, error) {
 	return t, err
 }
 
+// GetTaskByClient returns a task scoped to a client. Cross-client access is
+// indistinguishable from a missing task (ErrNotFound).
+func (s *Store) GetTaskByClient(ctx context.Context, taskID uuid.UUID, clientID int64) (Task, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT `+taskColumns+` FROM tasks
+		WHERE id = $1 AND client_id = $2`, taskID, clientID)
+	t, err := scanTask(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Task{}, ErrNotFound
+	}
+	return t, err
+}
+
+// CancelQueuedTask atomically cancels a queued task owned by the client.
+// Returns ErrNotFound when the task does not exist for the client or is no
+// longer queued.
+func (s *Store) CancelQueuedTask(ctx context.Context, taskID uuid.UUID, clientID int64) (Task, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE tasks
+		SET state = 'cancelled', finished_at = now(), updated_at = now()
+		WHERE id = $1 AND client_id = $2 AND state = 'queued'
+		RETURNING `+taskColumns, taskID, clientID)
+	t, err := scanTask(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Task{}, ErrNotFound
+	}
+	return t, err
+}
+
+// RequestCancelRunning durably records cancel intent for a running task
+// owned by the client. The worker honors it after the current inference
+// completes and discards the output. Returns ErrNotFound when the task does
+// not exist for the client or is not running.
+func (s *Store) RequestCancelRunning(ctx context.Context, taskID uuid.UUID, clientID int64) (Task, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE tasks
+		SET cancel_requested_at = now(), updated_at = now()
+		WHERE id = $1 AND client_id = $2 AND state = 'running'
+		RETURNING `+taskColumns, taskID, clientID)
+	t, err := scanTask(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Task{}, ErrNotFound
+	}
+	return t, err
+}
+
 // GetTaskWithPayload returns a task and its payload, or ErrNotFound.
 func (s *Store) GetTaskWithPayload(ctx context.Context, taskID uuid.UUID) (TaskWithPayload, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT t.id, t.client_id, t.workload_id, t.capability, t.idempotency_key,
 		       t.request_hash, t.state, t.attempts, t.lease_until, t.started_at,
-		       t.finished_at, t.created_at, t.updated_at, p.payload
+		       t.finished_at, t.cancel_requested_at, t.created_at, t.updated_at, p.payload
 		FROM tasks t
 		JOIN task_payloads p ON p.task_id = t.id
 		WHERE t.id = $1`, taskID)
 	var tw TaskWithPayload
 	err := row.Scan(&tw.ID, &tw.ClientID, &tw.WorkloadID, &tw.Capability,
 		&tw.IdempotencyKey, &tw.RequestHash, &tw.State, &tw.Attempts,
-		&tw.LeaseUntil, &tw.StartedAt, &tw.FinishedAt, &tw.CreatedAt,
-		&tw.UpdatedAt, &tw.Payload)
+		&tw.LeaseUntil, &tw.StartedAt, &tw.FinishedAt, &tw.CancelRequestedAt,
+		&tw.CreatedAt, &tw.UpdatedAt, &tw.Payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TaskWithPayload{}, ErrNotFound
 	}
@@ -261,7 +309,7 @@ func (s *Store) ClaimNextQueued(ctx context.Context, workerID uuid.UUID, lease t
 		err := tx.QueryRow(ctx, `
 			SELECT t.id, t.client_id, t.workload_id, t.capability, t.idempotency_key,
 			       t.request_hash, t.state, t.attempts, t.lease_until, t.started_at,
-			       t.finished_at, t.created_at, t.updated_at, p.payload
+			       t.finished_at, t.cancel_requested_at, t.created_at, t.updated_at, p.payload
 			FROM tasks t
 			JOIN task_payloads p ON p.task_id = t.id
 			WHERE t.state = 'queued'
@@ -270,7 +318,7 @@ func (s *Store) ClaimNextQueued(ctx context.Context, workerID uuid.UUID, lease t
 			LIMIT 1`,
 		).Scan(&t.ID, &t.ClientID, &t.WorkloadID, &t.Capability, &t.IdempotencyKey,
 			&t.RequestHash, &t.State, &t.Attempts, &t.LeaseUntil, &t.StartedAt,
-			&t.FinishedAt, &t.CreatedAt, &t.UpdatedAt, &payload)
+			&t.FinishedAt, &t.CancelRequestedAt, &t.CreatedAt, &t.UpdatedAt, &payload)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNoTaskAvailable
 		}

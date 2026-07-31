@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P03.
-- State: `ready_for_review`.
+- State: `accepted`.
 - Prerequisite: accepted P02.
 - Runtime impact: test PostgreSQL only; no existing database is reused.
 

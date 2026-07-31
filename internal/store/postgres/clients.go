@@ -12,44 +12,54 @@ import (
 
 // Client is the identity row. credential_digest holds a strong one-way hash of
 // the client's bearer token; plaintext credentials never reach the database.
+// credential_identifier is the short lookup prefix derived from the token.
 type Client struct {
-	ID               int64
-	Name             string
-	CredentialDigest []byte
-	Enabled          bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                   int64
+	Name                 string
+	CredentialIdentifier string
+	CredentialDigest     []byte
+	Enabled              bool
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 // CreateClientParams is the input for client provisioning.
 type CreateClientParams struct {
-	Name             string
-	CredentialDigest []byte
-	Enabled          bool
+	Name                 string
+	CredentialIdentifier string
+	CredentialDigest     []byte
+	Enabled              bool
 }
 
 // CreateClient inserts a client. A duplicate name yields ErrConflict.
 func (s *Store) CreateClient(ctx context.Context, p CreateClientParams) (Client, error) {
 	var c Client
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO clients (name, credential_digest, enabled)
-		VALUES ($1, $2, $3)
-		RETURNING id, name, credential_digest, enabled, created_at, updated_at`,
-		p.Name, p.CredentialDigest, p.Enabled).Scan(
-		&c.ID, &c.Name, &c.CredentialDigest, &c.Enabled, &c.CreatedAt, &c.UpdatedAt)
+		INSERT INTO clients (name, credential_identifier, credential_digest, enabled)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, name, credential_identifier, credential_digest, enabled, created_at, updated_at`,
+		p.Name, p.CredentialIdentifier, p.CredentialDigest, p.Enabled).Scan(
+		&c.ID, &c.Name, &c.CredentialIdentifier, &c.CredentialDigest, &c.Enabled,
+		&c.CreatedAt, &c.UpdatedAt)
 	if isUniqueViolation(err) {
 		return Client{}, fmt.Errorf("%w: client %q already exists", ErrConflict, p.Name)
 	}
 	return c, err
 }
 
+const clientColumns = `id, name, credential_identifier, credential_digest, enabled, created_at, updated_at`
+
+func scanClient(row pgx.Row) (Client, error) {
+	var c Client
+	err := row.Scan(&c.ID, &c.Name, &c.CredentialIdentifier, &c.CredentialDigest,
+		&c.Enabled, &c.CreatedAt, &c.UpdatedAt)
+	return c, err
+}
+
 // GetClientByName returns a client by name.
 func (s *Store) GetClientByName(ctx context.Context, name string) (Client, error) {
-	var c Client
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, name, credential_digest, enabled, created_at, updated_at
-		FROM clients WHERE name = $1`, name).Scan(
-		&c.ID, &c.Name, &c.CredentialDigest, &c.Enabled, &c.CreatedAt, &c.UpdatedAt)
+	c, err := scanClient(s.pool.QueryRow(ctx,
+		`SELECT `+clientColumns+` FROM clients WHERE name = $1`, name))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Client{}, ErrNotFound
 	}
@@ -58,11 +68,35 @@ func (s *Store) GetClientByName(ctx context.Context, name string) (Client, error
 
 // GetClientByID returns a client by ID.
 func (s *Store) GetClientByID(ctx context.Context, id int64) (Client, error) {
+	c, err := scanClient(s.pool.QueryRow(ctx,
+		`SELECT `+clientColumns+` FROM clients WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Client{}, ErrNotFound
+	}
+	return c, err
+}
+
+// GetClientByIdentifier returns a client by credential lookup identifier.
+func (s *Store) GetClientByIdentifier(ctx context.Context, identifier string) (Client, error) {
+	c, err := scanClient(s.pool.QueryRow(ctx,
+		`SELECT `+clientColumns+` FROM clients WHERE credential_identifier = $1`, identifier))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Client{}, ErrNotFound
+	}
+	return c, err
+}
+
+// RotateClientCredential replaces the credential digest and lookup identifier
+// of a client, invalidating the previous token.
+func (s *Store) RotateClientCredential(ctx context.Context, clientID int64, identifier string, digest []byte) (Client, error) {
 	var c Client
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, name, credential_digest, enabled, created_at, updated_at
-		FROM clients WHERE id = $1`, id).Scan(
-		&c.ID, &c.Name, &c.CredentialDigest, &c.Enabled, &c.CreatedAt, &c.UpdatedAt)
+		UPDATE clients
+		SET credential_identifier = $2, credential_digest = $3, updated_at = now()
+		WHERE id = $1
+		RETURNING `+clientColumns, clientID, identifier, digest).Scan(
+		&c.ID, &c.Name, &c.CredentialIdentifier, &c.CredentialDigest, &c.Enabled,
+		&c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Client{}, ErrNotFound
 	}
@@ -139,13 +173,27 @@ func (s *Store) UpsertWorkloadPolicy(ctx context.Context, p WorkloadPolicy) (Wor
 
 // GetWorkloadPolicyByName returns a workload policy by name.
 func (s *Store) GetWorkloadPolicyByName(ctx context.Context, name string) (WorkloadPolicy, error) {
-	var p WorkloadPolicy
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, name, priority_class, max_active_tasks, max_attempts,
+	return s.getWorkloadPolicy(ctx,
+		`SELECT id, name, priority_class, max_active_tasks, max_attempts,
 			retry_delays_seconds, max_output_tokens, allowed_generation,
 			required_features, payload_retention_seconds, result_retention_seconds,
 			metadata_retention_seconds, created_at, updated_at
-		FROM workload_policies WHERE name = $1`, name).Scan(
+		FROM workload_policies WHERE name = $1`, name)
+}
+
+// GetWorkloadPolicyByID returns a workload policy by ID.
+func (s *Store) GetWorkloadPolicyByID(ctx context.Context, id int64) (WorkloadPolicy, error) {
+	return s.getWorkloadPolicy(ctx,
+		`SELECT id, name, priority_class, max_active_tasks, max_attempts,
+			retry_delays_seconds, max_output_tokens, allowed_generation,
+			required_features, payload_retention_seconds, result_retention_seconds,
+			metadata_retention_seconds, created_at, updated_at
+		FROM workload_policies WHERE id = $1`, id)
+}
+
+func (s *Store) getWorkloadPolicy(ctx context.Context, query string, arg any) (WorkloadPolicy, error) {
+	var p WorkloadPolicy
+	err := s.pool.QueryRow(ctx, query, arg).Scan(
 		&p.ID, &p.Name, &p.PriorityClass, &p.MaxActiveTasks, &p.MaxAttempts,
 		&p.RetryDelaysSeconds, &p.MaxOutputTokens, &p.AllowedGeneration,
 		&p.RequiredFeatures, &p.PayloadRetentionSeconds, &p.ResultRetentionSeconds,

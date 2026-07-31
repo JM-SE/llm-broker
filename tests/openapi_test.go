@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -83,6 +84,32 @@ func TestOpenAPINoProviderSelection(t *testing.T) {
 			if _, ok := props[b]; ok {
 				t.Errorf("schema %s must not expose field %q", name, b)
 			}
+		}
+	}
+}
+
+// TestOpenAPIWaitContract pins the bounded synchronous wait: POST /v1/tasks
+// must declare 200 (terminal within window) alongside 201 and 202.
+func TestOpenAPIWaitContract(t *testing.T) {
+	data, err := os.ReadFile(openapiPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := openapi3.NewLoader().LoadFromData(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := doc.Paths.Find("/v1/tasks").Post
+	if post == nil {
+		t.Fatal("missing POST /v1/tasks")
+	}
+	for _, status := range []string{"200", "201", "202"} {
+		code, err := strconv.Atoi(status)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if post.Responses.Status(code) == nil {
+			t.Errorf("POST /v1/tasks missing response %s", status)
 		}
 	}
 }

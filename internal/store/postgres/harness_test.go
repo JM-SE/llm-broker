@@ -150,10 +150,13 @@ func uniqueName(prefix string) string {
 
 func mustCreateClient(t *testing.T, s *Store, name string) Client {
 	t.Helper()
+	// The identifier mirrors the auth contract (12-char lookup prefix).
+	identifier := fmt.Sprintf("fx%010d", fixtureSeq.Add(1))
 	c, err := s.CreateClient(context.Background(), CreateClientParams{
-		Name:             uniqueName(name),
-		CredentialDigest: testHash(name[0]),
-		Enabled:          true,
+		Name:                 uniqueName(name),
+		CredentialIdentifier: identifier,
+		CredentialDigest:     testHash(name[0]),
+		Enabled:              true,
 	})
 	if err != nil {
 		t.Fatalf("create client %s: %v", name, err)

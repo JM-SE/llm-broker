@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P04.
-- State: `pending`.
+- State: `ready_for_review`.
 - Prerequisite: accepted P03.
 - Runtime impact: isolated test API only; no worker or real backend.
 
@@ -99,6 +99,69 @@ admission, idempotency, cancellation, status, result, health, and readiness.
 
 ## Handoff
 
-Include endpoint/auth test evidence, sanitized example transcript, readiness
-behavior, logs inspection, changed files, Git status, and a suggested commit
-message. Stop for approval before P05.
+### Changed Files
+
+- `internal/auth/`: credential generation, SHA-256 digest, identifier
+  extraction, constant-time verification with dummy-digest comparison —
+  `token.go`, `verifier.go`, `verifier_test.go`.
+- `internal/api/`: HTTP surface — `server.go` (routing/middleware chain),
+  `middleware.go` (request id, panic recovery, sanitized logging, bearer
+  auth), `tasks.go` (create/wait/read/result/cancel, generation policy,
+  result envelope mapping), `ready.go` (health/readiness), `problems.go`
+  (RFC 7807 + stable codes), plus `harness_test.go` (disposable PostgreSQL
+  TestMain), `tasks_test.go`, `middleware_test.go`.
+- `internal/store/postgres/`: `credential_identifier` column and
+  `GetClientByIdentifier`/`RotateClientCredential`; task `cancel_requested_at`
+  with scoped `GetTaskByClient`/`CancelQueuedTask`/`RequestCancelRunning`;
+  `GetResultByTaskID`, `GetLastAttempt`, `CountActiveTasks`, `SaveResult`,
+  `MarkAttemptFailed`, `GetWorkloadPolicyByID`; migration
+  `00002_task_cancel_request.sql` (cancel intent + credential identifier).
+- `internal/domain/`: `DecodeTaskSubmission` now rejects trailing content via
+  `ErrTrailingContent` sentinel (HTTP 400 vs 422 classification).
+- `cmd/llm-broker/`: `api.go` (server command with graceful shutdown),
+  `client.go` (create/disable/revoke/grant), `dbutil.go` (shared store
+  opening); `main.go` wiring and usage; `main_test.go` reduced to the worker
+  placeholder.
+- `openapi.yaml`: POST `/v1/tasks` gains the `200` terminal-within-wait
+  response; `tests/openapi_test.go` pins the wait contract.
+- `docs/api.md`: operator setup, curl transcript, operational notes.
+
+### Validation Evidence
+
+- `go test ./... -count=1`: all packages pass (integration suites run against
+  disposable PostgreSQL 17 on loopback 55432).
+- `go test -race ./...`: all packages pass.
+- Concurrency: 16 same-key POSTs yield exactly one task ID; cross-client keys
+  are independent; 12 concurrent claims claim each row once (P03 regression).
+- Protocol: 201/replay/409 idempotency, 401 (missing/malformed/wrong/disabled),
+  403 (unknown/ungranted workload), 422 (unknown field, capability,
+  generation policy, json_schema without schema), 429 admission, 400 (bad
+  body, trailing content, bad Prefer), 202 wait expiry, 200 terminal wait,
+  disconnect leaves task queued, scoped reads/cancels are 404 cross-client,
+  cancel idempotent/conflict/intent-recorded.
+- OpenAPI document validates; wait contract pinned; product/source scans
+  clean; secret scan clean; `gofmt -l` empty; `go vet` clean; `go build ./...`
+  ok; `go mod verify` ok.
+- Fuzz (3s each): domain/config fuzzers pass (no crashes).
+- Manual smoke against the disposable database: full curl transcript in
+  `docs/api.md` — create/replay/401/wait-202/read/result/cancel/disable,
+  sanitized request logs verified, graceful shutdown verified.
+
+### Compatibility Questions
+
+- Workload policy rows are read from the database at submission time; there
+  is no command yet to sync them from configuration. The smoke run seeded the
+  policy with SQL. Consider a `sync` command in P05 (scheduler) scope.
+- `task_results`/attempt-outcome persistence methods (`SaveResult`,
+  `MarkAttemptFailed`) were introduced in P04 for the API tests; P07 (worker)
+  will use them as-is or adjust signatures.
+- Migration `00002` combines cancel intent and credential identifier; it is
+  in-flight (never released), so it was not split into two migrations.
+- Cancel of a running task records `cancel_requested_at`; the worker (P07)
+  defines the exact discard semantics.
+
+### Suggested Commit Message
+
+`feat: P04 API, authentication, and idempotency (HTTP surface, bearer credentials, bounded wait, cancel intent)`
+
+Stop for approval before P05.

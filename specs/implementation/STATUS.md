@@ -2,9 +2,9 @@
 
 ## Current Gate
 
-- Current phase: P03, PostgreSQL Persistence.
+- Current phase: P04, API, Authentication, and Idempotency.
 - State: `ready_for_review`.
-- Previous phases: P00, P01, and P02 accepted.
+- Previous phases: P00, P01, P02, and P03 accepted.
 - Git policy: initialized on `main`; no automatic commits (changes are left for
   manual review and user commits).
 
@@ -15,8 +15,8 @@
 | P00 | `accepted` | approved |
 | P01 | `accepted` | approved |
 | P02 | `accepted` | approved |
-| P03 | `ready_for_review` | P02 accepted |
-| P04 | `blocked` | requires P03 |
+| P03 | `accepted` | approved |
+| P04 | `ready_for_review` | P03 accepted |
 | P05 | `blocked` | requires P04 |
 | P06 | `blocked` | requires P05 |
 | P07 | `blocked` | requires P06 |
@@ -81,9 +81,13 @@
 - Product P01: accepted.
 - Product P02: accepted (contracts, configuration, backend interfaces,
   OpenAPI).
+- Product P03: accepted (PostgreSQL persistence, migrations, store,
+  integration tests).
+- Product P04: ready for review (HTTP API, bearer authentication, bounded
+  wait, cancellation intent).
 - Product P03: ready for review (PostgreSQL persistence, migrations, store,
   integration tests).
 
 ## Suggested Commit Message
 
-`feat: P03 PostgreSQL persistence (migrations, store, migrate commands, integration tests)`
+`feat: P04 API, authentication, and idempotency (HTTP surface, bearer credentials, bounded wait, cancel intent)`

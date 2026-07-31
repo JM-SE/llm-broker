@@ -90,6 +90,12 @@ paths:
             schema:
               $ref: "#/components/schemas/TaskSubmission"
       responses:
+        "200":
+          description: Task reached a terminal state within the wait window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResult"
         "201":
           description: Task accepted
           headers:

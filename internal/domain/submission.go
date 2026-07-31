@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -23,12 +24,20 @@ type TaskSubmission struct {
 // DecodeTaskSubmission strictly decodes a request body and validates it.
 // Unknown fields, duplicate fields, and invalid shapes are rejected; the
 // resulting struct is the normalized form used for hashing and storage.
+// ErrTrailingContent reports that a request body carried more JSON after the
+// task submission. It is a malformed-body condition (HTTP 400), distinct from
+// contract violations.
+var ErrTrailingContent = errors.New("trailing content after the task submission")
+
 func DecodeTaskSubmission(r io.Reader) (*TaskSubmission, error) {
 	dec := json.NewDecoder(io.LimitReader(r, MaxBodyBytes+1))
 	dec.DisallowUnknownFields()
 	var s TaskSubmission
 	if err := dec.Decode(&s); err != nil {
 		return nil, fmt.Errorf("invalid task request: %w", err)
+	}
+	if dec.More() {
+		return nil, fmt.Errorf("invalid task request: %w", ErrTrailingContent)
 	}
 	if err := s.Validate(); err != nil {
 		return nil, err
