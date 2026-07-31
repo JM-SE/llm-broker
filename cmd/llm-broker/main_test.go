@@ -40,22 +40,6 @@ func TestNoArgs(t *testing.T) {
 	}
 }
 
-func TestPlaceholderCommands(t *testing.T) {
-	for _, cmd := range []string{"worker"} {
-		var stdout, stderr bytes.Buffer
-		code := run(context.Background(), []string{"llm-broker", cmd}, &stdout, &stderr)
-		if code != exitNotImplemented {
-			t.Errorf("%s exit code = %d, want %d", cmd, code, exitNotImplemented)
-		}
-		if !strings.Contains(stderr.String(), "not implemented") {
-			t.Errorf("%s stderr missing not implemented: %s", cmd, stderr.String())
-		}
-		if !strings.Contains(stderr.String(), cmd) {
-			t.Errorf("%s stderr missing subcommand name: %s", cmd, stderr.String())
-		}
-	}
-}
-
 func TestUnknownCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run(context.Background(), []string{"llm-broker", "nonexistent"}, &stdout, &stderr)

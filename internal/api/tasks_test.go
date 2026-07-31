@@ -188,7 +188,8 @@ func TestCreateTaskAuthorization(t *testing.T) {
 		other := uniqueName("otherwl")
 		adminStore.UpsertWorkloadPolicy(context.Background(), postgres.WorkloadPolicy{
 			Name: other, PriorityClass: "normal", MaxActiveTasks: 10, MaxAttempts: 3,
-			RetryDelaysSeconds: []int{1, 5}, MaxOutputTokens: 2048, AllowedGeneration: []byte("{}"),
+			RetryDelaysSeconds:     []int{1, 5},
+			WorkloadTimeoutSeconds: 300, MaxOutputTokens: 2048, AllowedGeneration: []byte("{}"),
 			RequiredFeatures: []string{}, PayloadRetentionSeconds: 3600,
 			ResultRetentionSeconds: 86400, MetadataRetentionSeconds: 2592000,
 		})
@@ -267,7 +268,8 @@ func TestCreateTaskGenerationPolicy(t *testing.T) {
 	name := uniqueName("genwl")
 	adminStore.UpsertWorkloadPolicy(context.Background(), postgres.WorkloadPolicy{
 		Name: name, PriorityClass: "normal", MaxActiveTasks: 10, MaxAttempts: 3,
-		RetryDelaysSeconds: []int{1, 5}, MaxOutputTokens: 2048,
+		RetryDelaysSeconds:     []int{1, 5},
+		WorkloadTimeoutSeconds: 300, MaxOutputTokens: 2048,
 		AllowedGeneration:        []byte(`{"max_tokens": {"max": 100}}`),
 		RequiredFeatures:         []string{},
 		PayloadRetentionSeconds:  3600,
@@ -634,9 +636,71 @@ func TestHealthAndReady(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(b), `"ok"`) {
 		t.Errorf("health: %d %s", resp.StatusCode, b)
 	}
+	// Ready requires an active worker heartbeat.
+	resp, b = doReq(t, env.ts, http.MethodGet, "/ready", "", "", "", "")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("ready without worker = %d, want 503; body %s", resp.StatusCode, b)
+	}
+	workerID := uuid.New()
+	if err := adminStore.UpsertWorkerHeartbeat(context.Background(), workerID, "active"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = adminStore.PruneStaleWorkers(context.Background(), 0)
+	})
 	resp, b = doReq(t, env.ts, http.MethodGet, "/ready", "", "", "", "")
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(b), `"ready":true`) {
-		t.Errorf("ready: %d %s", resp.StatusCode, b)
+		t.Errorf("ready with active worker: %d %s", resp.StatusCode, b)
+	}
+}
+
+func TestReadyFailsWithUnresolvedIndeterminate(t *testing.T) {
+	env := newTestEnv(t)
+	workerID := uuid.New()
+	if err := adminStore.UpsertWorkerHeartbeat(context.Background(), workerID, "active"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = adminStore.PruneStaleWorkers(context.Background(), 0)
+	})
+
+	// Craft an unresolved ambiguous execution: a running task with an
+	// expired lease and an indeterminate last attempt.
+	if _, err := adminStore.Pool().Exec(context.Background(),
+		`DELETE FROM tasks WHERE state = 'queued'`); err != nil {
+		t.Fatal(err)
+	}
+	_, clientID := newClient(t, "indeterminate-client")
+	workload := grantWorkload(t, clientID, 10)
+	policy, err := adminStore.GetWorkloadPolicyByName(context.Background(), workload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"workload":"x","capability":"instruct","messages":[{"role":"user","content":"hi"}],"response":{"kind":"text"}}`)
+	res, err := adminStore.CreateTask(context.Background(), postgres.CreateTaskParams{
+		ClientID: clientID, WorkloadID: policy.ID,
+		Capability: "instruct", IdempotencyKey: "indeterminate-key-001",
+		RequestHash: make([]byte, 32), Payload: payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := adminStore.ClaimNextQueued(context.Background(), workerID, time.Minute)
+	if err != nil || claimed.ID != res.TaskID {
+		t.Fatalf("claim: %v (%s)", err, claimed.ID)
+	}
+	if _, err := adminStore.Pool().Exec(context.Background(),
+		`UPDATE tasks SET lease_until = now() - interval '1 minute' WHERE id = $1`, res.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if err := adminStore.MarkAttemptFailed(context.Background(), res.TaskID, 1,
+		"indeterminate", "request_interrupted"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, b := doReq(t, env.ts, http.MethodGet, "/ready", "", "", "", "")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("ready with unresolved indeterminate = %d, want 503; body %s", resp.StatusCode, b)
 	}
 }
 

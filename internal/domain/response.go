@@ -64,6 +64,37 @@ func (s *SchemaContract) Raw() []byte { return s.raw }
 // Canonical returns the deterministic bytes of the schema.
 func (s *SchemaContract) Canonical() []byte { return s.raw }
 
+// Validate checks an instance document (JSON bytes) against the compiled
+// schema. Compilation is fully local: no network or filesystem access is
+// possible. Used by the worker before persisting a structured result.
+func (s *SchemaContract) Validate(instance []byte) error {
+	if len(instance) == 0 {
+		return fmt.Errorf("output is empty")
+	}
+	compiler := newSchemaCompiler()
+	doc, err := decodeSchemaDoc(s.raw)
+	if err != nil {
+		return fmt.Errorf("decode schema: %w", err)
+	}
+	if err := compiler.AddResource("task-schema.json", doc); err != nil {
+		return fmt.Errorf("compile schema: %w", err)
+	}
+	sch, err := compiler.Compile("task-schema.json")
+	if err != nil {
+		return fmt.Errorf("compile schema: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(instance))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return fmt.Errorf("output is not valid JSON: %w", err)
+	}
+	if err := sch.Validate(v); err != nil {
+		return fmt.Errorf("output does not satisfy the response schema: %w", err)
+	}
+	return nil
+}
+
 // canonicalizeSchemaJSON parses the schema, verifies structural bounds and
 // remote-reference rejection, and re-encodes it with deterministic key
 // ordering so semantically identical schemas share bytes.

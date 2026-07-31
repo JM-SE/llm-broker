@@ -22,7 +22,8 @@ func eligibleSelectSQL() string {
 		eligible AS (
 			SELECT t.id, t.client_id, t.workload_id, t.capability, t.idempotency_key,
 			       t.request_hash, t.state, t.attempts, t.lease_until, t.started_at,
-			       t.finished_at, t.cancel_requested_at, t.created_at, t.updated_at,
+			       t.finished_at, t.cancel_requested_at, t.retry_available_at,
+			       t.created_at, t.updated_at,
 			       p.payload,
 			       CASE w.priority_class
 			           WHEN 'high' THEN %d
@@ -37,10 +38,12 @@ func eligibleSelectSQL() string {
 			CROSS JOIN snapshot s
 			WHERE t.state = 'queued'
 			  AND t.attempts < w.max_attempts
+			  AND (t.retry_available_at IS NULL OR t.retry_available_at <= s.ts)
 		)
 		SELECT id, client_id, workload_id, capability, idempotency_key,
 		       request_hash, state, attempts, lease_until, started_at,
-		       finished_at, cancel_requested_at, created_at, updated_at,
+		       finished_at, cancel_requested_at, retry_available_at,
+		       created_at, updated_at,
 		       payload, effective_priority
 		FROM eligible
 		ORDER BY effective_priority DESC, created_at, id

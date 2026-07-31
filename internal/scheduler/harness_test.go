@@ -157,6 +157,7 @@ func mustPolicy(t *testing.T, name, class string, maxAttempts int) postgres.Work
 		MaxActiveTasks:           250,
 		MaxAttempts:              maxAttempts,
 		RetryDelaysSeconds:       []int{1, 5},
+		WorkloadTimeoutSeconds:   300,
 		MaxOutputTokens:          2048,
 		AllowedGeneration:        []byte("{}"),
 		RequiredFeatures:         []string{},

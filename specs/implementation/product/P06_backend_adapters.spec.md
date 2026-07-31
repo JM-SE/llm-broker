@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P06.
-- State: `ready_for_review`.
+- State: `accepted`.
 - Prerequisite: accepted P05.
 - Runtime impact: fake and local `httptest` servers only.
 

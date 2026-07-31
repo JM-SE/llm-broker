@@ -128,6 +128,9 @@ func (l *Leader) Held() bool {
 // WorkerID returns the identity of this leader's worker.
 func (l *Leader) WorkerID() uuid.UUID { return l.workerID }
 
+// Interval returns the heartbeat/refresh interval of this leader.
+func (l *Leader) Interval() time.Duration { return l.interval }
+
 // Release gracefully steps down: announce stopped, stop the heartbeat loop,
 // and drop the lock.
 func (l *Leader) Release() {

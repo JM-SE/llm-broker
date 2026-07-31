@@ -2,9 +2,9 @@
 
 ## Current Gate
 
-- Current phase: P06, Backend Adapters.
+- Current phase: P07, Worker and Recovery.
 - State: `ready_for_review`.
-- Previous phases: P00 through P05 accepted.
+- Previous phases: P00 through P06 accepted.
 - Git policy: initialized on `main`; no automatic commits (changes are left for
   manual review and user commits).
 
@@ -18,8 +18,8 @@
 | P03 | `accepted` | approved |
 | P04 | `accepted` | approved |
 | P05 | `accepted` | approved |
-| P06 | `ready_for_review` | P05 accepted |
-| P07 | `blocked` | requires P06 |
+| P06 | `accepted` | approved |
+| P07 | `ready_for_review` | P06 accepted |
 | P08 | `blocked` | requires P07 |
 | P09 | `blocked` | requires P08 |
 
@@ -87,7 +87,12 @@
   cancel intent).
 - Product P05: accepted (scheduler, aging, affinity batches, leadership,
   single claim path).
+- Product P06: accepted (backend adapters, registry, deterministic fake,
+- Product P07: ready for review (worker and recovery, serial execution,
+  persisted backoff, cancel semantics, ambiguous recovery CLI).
+  OpenAI-compatible mapping, conformance suite).
 
 ## Suggested Commit Message
 
 `feat: P06 backend adapters (registry, deterministic fake, OpenAI-compatible mapping, conformance suite)`
+- Suggested commit message: `feat: P07 worker and recovery (serial execution, persisted backoff, cancel semantics, ambiguous recovery, CLI status/resolve)`

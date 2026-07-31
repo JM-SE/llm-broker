@@ -29,6 +29,7 @@ type Task struct {
 	StartedAt         *time.Time
 	FinishedAt        *time.Time
 	CancelRequestedAt *time.Time
+	RetryAvailableAt  *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
@@ -59,14 +60,14 @@ type CreateTaskResult struct {
 
 const taskColumns = `id, client_id, workload_id, capability, idempotency_key,
 	request_hash, state, attempts, lease_until, started_at, finished_at,
-	cancel_requested_at, created_at, updated_at`
+	cancel_requested_at, retry_available_at, created_at, updated_at`
 
 func scanTask(row pgx.Row) (Task, error) {
 	var t Task
 	err := row.Scan(&t.ID, &t.ClientID, &t.WorkloadID, &t.Capability,
 		&t.IdempotencyKey, &t.RequestHash, &t.State, &t.Attempts,
 		&t.LeaseUntil, &t.StartedAt, &t.FinishedAt, &t.CancelRequestedAt,
-		&t.CreatedAt, &t.UpdatedAt)
+		&t.RetryAvailableAt, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 
@@ -153,7 +154,7 @@ func (s *Store) GetTaskByClient(ctx context.Context, taskID uuid.UUID, clientID 
 func (s *Store) CancelQueuedTask(ctx context.Context, taskID uuid.UUID, clientID int64) (Task, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE tasks
-		SET state = 'cancelled', finished_at = now(), updated_at = now()
+		SET state = 'cancelled', finished_at = now(), retry_available_at = NULL, updated_at = now()
 		WHERE id = $1 AND client_id = $2 AND state = 'queued'
 		RETURNING `+taskColumns, taskID, clientID)
 	t, err := scanTask(row)
@@ -185,7 +186,8 @@ func (s *Store) GetTaskWithPayload(ctx context.Context, taskID uuid.UUID) (TaskW
 	row := s.pool.QueryRow(ctx, `
 		SELECT t.id, t.client_id, t.workload_id, t.capability, t.idempotency_key,
 		       t.request_hash, t.state, t.attempts, t.lease_until, t.started_at,
-		       t.finished_at, t.cancel_requested_at, t.created_at, t.updated_at, p.payload
+		       t.finished_at, t.cancel_requested_at, t.retry_available_at,
+		       t.created_at, t.updated_at, p.payload
 		FROM tasks t
 		JOIN task_payloads p ON p.task_id = t.id
 		WHERE t.id = $1`, taskID)
@@ -193,7 +195,7 @@ func (s *Store) GetTaskWithPayload(ctx context.Context, taskID uuid.UUID) (TaskW
 	err := row.Scan(&tw.ID, &tw.ClientID, &tw.WorkloadID, &tw.Capability,
 		&tw.IdempotencyKey, &tw.RequestHash, &tw.State, &tw.Attempts,
 		&tw.LeaseUntil, &tw.StartedAt, &tw.FinishedAt, &tw.CancelRequestedAt,
-		&tw.CreatedAt, &tw.UpdatedAt, &tw.Payload)
+		&tw.RetryAvailableAt, &tw.CreatedAt, &tw.UpdatedAt, &tw.Payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TaskWithPayload{}, ErrNotFound
 	}
@@ -243,7 +245,8 @@ func (s *Store) TransitionTask(ctx context.Context, taskID uuid.UUID, from, to d
 		    updated_at = now(),
 		    started_at = CASE WHEN $3 = 'running' THEN now() ELSE NULL END,
 		    finished_at = CASE WHEN $3 IN ('succeeded', 'failed', 'cancelled') THEN now() ELSE NULL END,
-		    lease_until = CASE WHEN $3 = 'running' THEN now() + ($4 * interval '1 second') ELSE NULL END
+		    lease_until = CASE WHEN $3 = 'running' THEN now() + ($4 * interval '1 second') ELSE NULL END,
+		    retry_available_at = CASE WHEN $3 = 'queued' THEN retry_available_at ELSE NULL END
 		WHERE id = $1 AND state = $2`,
 		taskID, string(from), string(to), leaseSeconds)
 	if err != nil {
@@ -310,7 +313,8 @@ func (s *Store) ClaimNextQueued(ctx context.Context, workerID uuid.UUID, lease t
 	ct, err := s.claimSelect(ctx, workerID, lease, `
 		SELECT t.id, t.client_id, t.workload_id, t.capability, t.idempotency_key,
 		       t.request_hash, t.state, t.attempts, t.lease_until, t.started_at,
-		       t.finished_at, t.cancel_requested_at, t.created_at, t.updated_at,
+		       t.finished_at, t.cancel_requested_at, t.retry_available_at,
+		       t.created_at, t.updated_at,
 		       p.payload, 0::int AS effective_priority
 		FROM tasks t
 		JOIN task_payloads p ON p.task_id = t.id
@@ -350,7 +354,8 @@ func (s *Store) claimSelect(ctx context.Context, workerID uuid.UUID, lease time.
 		err := tx.QueryRow(ctx, query, args...).Scan(
 			&t.ID, &t.ClientID, &t.WorkloadID, &t.Capability, &t.IdempotencyKey,
 			&t.RequestHash, &t.State, &t.Attempts, &t.LeaseUntil, &t.StartedAt,
-			&t.FinishedAt, &t.CancelRequestedAt, &t.CreatedAt, &t.UpdatedAt,
+			&t.FinishedAt, &t.CancelRequestedAt, &t.RetryAvailableAt,
+			&t.CreatedAt, &t.UpdatedAt,
 			&payload, &effective)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNoTaskAvailable
@@ -365,6 +370,7 @@ func (s *Store) claimSelect(ctx context.Context, workerID uuid.UUID, lease time.
 			    attempts = attempts + 1,
 			    started_at = now(),
 			    lease_until = now() + ($2 * interval '1 second'),
+			    retry_available_at = NULL,
 			    updated_at = now()
 			WHERE id = $1 AND state = 'queued'
 			RETURNING attempts`,

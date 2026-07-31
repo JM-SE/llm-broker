@@ -39,8 +39,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "api":
 		return runAPI(ctx, args[2:], stdout, stderr)
 	case "worker":
-		fmt.Fprintln(stderr, "llm-broker worker: not implemented")
-		return exitNotImplemented
+		return runWorker(ctx, args[2:], stdout, stderr)
 	case "migrate":
 		return runMigrate(ctx, args[2:], stdout, stderr)
 	case "client":
@@ -86,6 +85,13 @@ migrate:
 api:
   llm-broker api
     starts the HTTP API server; configuration comes from $LLM_BROKER_CONFIG_FILE
+
+worker:
+  llm-broker worker
+  llm-broker worker status
+  llm-broker worker resolve <task-id> --outcome=requeue|failed [--delay=N]
+    runs the execution worker or inspects/resolves ambiguous executions;
+    configuration comes from $LLM_BROKER_CONFIG_FILE
 
 client:
   llm-broker client create <name>

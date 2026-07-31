@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P07.
-- State: `pending`.
+- State: `ready_for_review`.
 - Prerequisite: accepted P06.
 - Runtime impact: isolated PostgreSQL and fake/test HTTP backends only.
 
@@ -102,6 +102,63 @@ cancellation, leases, graceful shutdown, and fail-closed ambiguous recovery.
 
 ## Handoff
 
-Include scenario matrix, overlapping-call evidence, crash/recovery transcript,
-readiness state, changed files, Git status, and a suggested commit message. Stop
-for approval before P08.
+### Changed Files
+
+- `internal/worker/`: `worker.go` (leadership acquisition, standby loop,
+  claim-execute cycle, blocked-state detection, graceful drain),
+  `execute.go` (policy lookup, adapter resolution with feature checks,
+  payload decode, cancel-before-call, workload deadline, lease renewal,
+  outcome handling, response-contract validation).
+- `internal/store/postgres/recovery.go`: `HasUnresolvedIndeterminate`,
+  `ListUnresolvedRecovery`, `RequeueForRetry`, `FinishTaskSucceeded`,
+  `FinishTaskFailed`, `FinishTaskCancelled` (single-transaction terminal
+  persistence, expected-state guarded).
+- `internal/store/postgres/tasks.go`/`clients.go`: `Task.RetryAvailableAt`,
+  `WorkloadPolicy.WorkloadTimeoutSeconds`, claim clears retry gate, scoped
+  queries updated.
+- `migrations/00003_retry_availability_and_timeout.sql`: persisted backoff
+  gate and per-workload timeout.
+- `internal/domain/response.go`: `SchemaContract.Validate(instance []byte)`.
+- `internal/scheduler/`: `eligibleSelectSQL` retry-availability gate;
+  `Leader.Interval()` accessor.
+- `cmd/llm-broker/worker.go`: `worker`, `worker status`, `worker resolve`
+  (operator recovery CLI with audit codes `operator_requeue`/`operator_failed`).
+- `internal/api/ready.go`: readiness now requires a fresh active worker
+  heartbeat and no unresolved ambiguous execution.
+- `docs/recovery.md`: operator runbook.
+- Tests: `internal/worker/` harness + 11 worker tests + 2 e2e tests
+  (API+worker+wait, two-worker no-overlap with atomic concurrency counter);
+  `internal/api/` readiness tests updated.
+
+### Validation Evidence
+
+- `go test -race -p 1 ./... -count=1`: all 13 packages pass.
+- Scenario matrix (worker package): success e2e; retry-then-success with
+  deterministic flaky adapter; budget exhaustion; backend-rejected terminal;
+  malformed output terminal (no result row); indeterminate blocks worker
+  until operator requeue (second task completes, requeued task ineligible
+  until availability); cancel before call (no inference, timed); cancel
+  during call (output discarded); lock loss stops claims; graceful shutdown
+  drains in-flight call; e2e POST with `Prefer: wait=N` returns 200 result;
+  two workers against a test OpenAI-compatible server never exceed one
+  concurrent call (maxActive==1).
+- `go vet ./...`, `go build ./...`, `gofmt -l .` (empty), `go mod verify`,
+  `git diff --check`: clean.
+
+### Compatibility Questions
+
+- Unresolved-indeterminate detection does not wait for lease expiry: once the
+  worker records an indeterminate attempt the execution is over and blocking
+  is immediate (a fresh lease simply means the call may still be running, not
+  that the outcome is unknown).
+- Retry backoff is the configured base delay plus up to 50% jitter, persisted
+  via `retry_available_at`; no clock dependency at eligibility time.
+- The worker exits on configuration errors (unresolvable capability/backend)
+  instead of failing tasks, so a misconfiguration is visible in the service
+  unit.
+
+### Suggested Commit Message
+
+`feat: P07 worker and recovery (serial execution, persisted backoff, cancel semantics, ambiguous recovery, CLI status/resolve)`
+
+Stop for approval before P08.

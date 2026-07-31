@@ -172,6 +172,7 @@ func mustUpsertPolicy(t *testing.T, s *Store, name string) WorkloadPolicy {
 		MaxActiveTasks:           250,
 		MaxAttempts:              3,
 		RetryDelaysSeconds:       []int{1, 5},
+		WorkloadTimeoutSeconds:   300,
 		MaxOutputTokens:          2048,
 		AllowedGeneration:        []byte("{}"),
 		RequiredFeatures:         []string{},

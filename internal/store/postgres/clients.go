@@ -128,6 +128,7 @@ type WorkloadPolicy struct {
 	MaxOutputTokens          int
 	AllowedGeneration        []byte
 	RequiredFeatures         []string
+	WorkloadTimeoutSeconds   int
 	PayloadRetentionSeconds  int64
 	ResultRetentionSeconds   int64
 	MetadataRetentionSeconds int64
@@ -142,8 +143,9 @@ func (s *Store) UpsertWorkloadPolicy(ctx context.Context, p WorkloadPolicy) (Wor
 		INSERT INTO workload_policies (
 			name, priority_class, max_active_tasks, max_attempts, retry_delays_seconds,
 			max_output_tokens, allowed_generation, required_features,
+			workload_timeout_seconds,
 			payload_retention_seconds, result_retention_seconds, metadata_retention_seconds)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12)
 		ON CONFLICT (name) DO UPDATE SET
 			priority_class = EXCLUDED.priority_class,
 			max_active_tasks = EXCLUDED.max_active_tasks,
@@ -152,21 +154,25 @@ func (s *Store) UpsertWorkloadPolicy(ctx context.Context, p WorkloadPolicy) (Wor
 			max_output_tokens = EXCLUDED.max_output_tokens,
 			allowed_generation = EXCLUDED.allowed_generation,
 			required_features = EXCLUDED.required_features,
+			workload_timeout_seconds = EXCLUDED.workload_timeout_seconds,
 			payload_retention_seconds = EXCLUDED.payload_retention_seconds,
 			result_retention_seconds = EXCLUDED.result_retention_seconds,
 			metadata_retention_seconds = EXCLUDED.metadata_retention_seconds,
 			updated_at = now()
 		RETURNING id, name, priority_class, max_active_tasks, max_attempts,
 			retry_delays_seconds, max_output_tokens, allowed_generation,
-			required_features, payload_retention_seconds, result_retention_seconds,
+			required_features, workload_timeout_seconds,
+			payload_retention_seconds, result_retention_seconds,
 			metadata_retention_seconds, created_at, updated_at`,
 		p.Name, p.PriorityClass, p.MaxActiveTasks, p.MaxAttempts,
 		p.RetryDelaysSeconds, p.MaxOutputTokens, string(p.AllowedGeneration),
-		p.RequiredFeatures, p.PayloadRetentionSeconds, p.ResultRetentionSeconds,
+		p.RequiredFeatures, p.WorkloadTimeoutSeconds,
+		p.PayloadRetentionSeconds, p.ResultRetentionSeconds,
 		p.MetadataRetentionSeconds).Scan(
 		&out.ID, &out.Name, &out.PriorityClass, &out.MaxActiveTasks, &out.MaxAttempts,
 		&out.RetryDelaysSeconds, &out.MaxOutputTokens, &out.AllowedGeneration,
-		&out.RequiredFeatures, &out.PayloadRetentionSeconds, &out.ResultRetentionSeconds,
+		&out.RequiredFeatures, &out.WorkloadTimeoutSeconds,
+		&out.PayloadRetentionSeconds, &out.ResultRetentionSeconds,
 		&out.MetadataRetentionSeconds, &out.CreatedAt, &out.UpdatedAt)
 	return out, err
 }
@@ -176,7 +182,8 @@ func (s *Store) GetWorkloadPolicyByName(ctx context.Context, name string) (Workl
 	return s.getWorkloadPolicy(ctx,
 		`SELECT id, name, priority_class, max_active_tasks, max_attempts,
 			retry_delays_seconds, max_output_tokens, allowed_generation,
-			required_features, payload_retention_seconds, result_retention_seconds,
+			required_features, workload_timeout_seconds,
+			payload_retention_seconds, result_retention_seconds,
 			metadata_retention_seconds, created_at, updated_at
 		FROM workload_policies WHERE name = $1`, name)
 }
@@ -186,7 +193,8 @@ func (s *Store) GetWorkloadPolicyByID(ctx context.Context, id int64) (WorkloadPo
 	return s.getWorkloadPolicy(ctx,
 		`SELECT id, name, priority_class, max_active_tasks, max_attempts,
 			retry_delays_seconds, max_output_tokens, allowed_generation,
-			required_features, payload_retention_seconds, result_retention_seconds,
+			required_features, workload_timeout_seconds,
+			payload_retention_seconds, result_retention_seconds,
 			metadata_retention_seconds, created_at, updated_at
 		FROM workload_policies WHERE id = $1`, id)
 }
@@ -196,7 +204,8 @@ func (s *Store) getWorkloadPolicy(ctx context.Context, query string, arg any) (W
 	err := s.pool.QueryRow(ctx, query, arg).Scan(
 		&p.ID, &p.Name, &p.PriorityClass, &p.MaxActiveTasks, &p.MaxAttempts,
 		&p.RetryDelaysSeconds, &p.MaxOutputTokens, &p.AllowedGeneration,
-		&p.RequiredFeatures, &p.PayloadRetentionSeconds, &p.ResultRetentionSeconds,
+		&p.RequiredFeatures, &p.WorkloadTimeoutSeconds,
+		&p.PayloadRetentionSeconds, &p.ResultRetentionSeconds,
 		&p.MetadataRetentionSeconds, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WorkloadPolicy{}, ErrNotFound

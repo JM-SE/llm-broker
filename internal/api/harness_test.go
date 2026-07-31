@@ -223,6 +223,7 @@ func grantWorkload(t *testing.T, clientID int64, maxActive int) string {
 		MaxActiveTasks:           maxActive,
 		MaxAttempts:              3,
 		RetryDelaysSeconds:       []int{1, 5},
+		WorkloadTimeoutSeconds:   300,
 		MaxOutputTokens:          2048,
 		AllowedGeneration:        []byte("{}"),
 		RequiredFeatures:         []string{},
