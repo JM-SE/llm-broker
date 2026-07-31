@@ -1,0 +1,76 @@
+# Fake-mode quick start stack: dedicated PostgreSQL, API, and worker, all
+# bound to loopback on the host. No real model is contacted; the fake
+# backend answers deterministically.
+#
+#   cp compose.example.yaml compose.yaml
+#   export LLM_BROKER_DB_PASSWORD="$(openssl rand -hex 24)"
+#   docker compose build
+#   docker compose run --rm migrate migrate up
+#   docker compose up -d
+#
+# Then follow docs/quickstart.md (client create, grant, submit).
+#
+# WARNING: the database URL embeds the password in the environment; the
+# Compose project is intended for local/fake-mode operation only.
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: llm_broker
+      POSTGRES_PASSWORD: ${LLM_BROKER_DB_PASSWORD:?set a strong password}
+      POSTGRES_DB: llm_broker
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${LLM_BROKER_DB_PORT:-55433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llm_broker -d llm_broker"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  migrate:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: &broker-env
+      LLM_BROKER_CONFIG_FILE: /config/config.json
+      LLM_BROKER_DATABASE_URL: postgres://llm_broker:${LLM_BROKER_DB_PASSWORD}@db:5432/llm_broker?sslmode=disable
+    volumes:
+      - ./deploy/compose/config.json:/config/config.json:ro
+    command: ["migrate", "up"]
+    restart: "no"
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *broker-env
+    ports:
+      - "127.0.0.1:8010:8010"
+    volumes:
+      - ./deploy/compose/config.json:/config/config.json:ro
+    command: ["api"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8010/health >/dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+    restart: unless-stopped
+
+  worker:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *broker-env
+    volumes:
+      - ./deploy/compose/config.json:/config/config.json:ro
+    command: ["worker"]
+    restart: unless-stopped
+
+volumes:
+  dbdata:

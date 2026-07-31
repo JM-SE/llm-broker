@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "api": {
+    "listen": "0.0.0.0:8010",
+    "metrics_enabled": true
+  },
+  "database": {
+    "url_env": "LLM_BROKER_DATABASE_URL"
+  },
+  "retention": {
+    "payload": "1h",
+    "result": "168h",
+    "metadata": "720h"
+  },
+  "backends": {
+    "fake": {
+      "type": "fake",
+      "fail_mode": "none",
+      "delay": "100ms"
+    }
+  },
+  "capabilities": {
+    "instruct": {
+      "backend": "fake"
+    }
+  },
+  "workloads": {
+    "default": {
+      "priority_class": "normal",
+      "max_active_tasks": 10,
+      "max_attempts": 3,
+      "retry_delays_seconds": [1, 5],
+      "max_output_tokens": 2048
+    }
+  }
+}

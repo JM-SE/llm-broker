@@ -1,0 +1,48 @@
+# Release artifact build (CI-side). Triggered on version tags; produces
+# binaries + checksums as CI artifacts. Publishing a GitHub Release, tag,
+# image, or package is a separate explicit operator step.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+      - name: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w \
+              -X github.com/JM-SE/llm-broker/internal/version.Version=${VERSION} \
+              -X github.com/JM-SE/llm-broker/internal/version.Commit=${GITHUB_SHA::12} \
+              -X github.com/JM-SE/llm-broker/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o dist/llm-broker-${VERSION}-${GOOS}-${GOARCH} ./cmd/llm-broker
+          tar -C dist -czf dist/llm-broker-${VERSION}-${GOOS}-${GOARCH}.tar.gz \
+            llm-broker-${VERSION}-${GOOS}-${GOARCH} LICENSE
+          rm dist/llm-broker-${VERSION}-${GOOS}-${GOARCH}
+      - name: checksums
+        run: cd dist && sha256sum llm-broker-*.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llm-broker-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/

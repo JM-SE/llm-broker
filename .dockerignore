@@ -1,0 +1,14 @@
+.git
+.gitignore
+.github
+dist
+specs
+docs
+examples
+scripts
+deploy
+*.md
+Dockerfile
+compose.example.yaml
+Makefile
+llm-broker

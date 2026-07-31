@@ -1,0 +1,39 @@
+[Unit]
+Description=LLM Broker API
+Documentation=https://github.com/JM-SE/llm-broker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=llm-broker
+Group=llm-broker
+EnvironmentFile=/etc/llm-broker/api.env
+ExecStart=/usr/local/bin/llm-broker api
+Restart=on-failure
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+ReadOnlyPaths=/etc/llm-broker
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

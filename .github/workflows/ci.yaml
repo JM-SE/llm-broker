@@ -28,3 +28,23 @@ jobs:
         run: go build ./cmd/llm-broker
       - name: mod verify
         run: go mod verify
+      - name: vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: llm-broker:ci
+      - name: version smoke (non-root image)
+        run: docker run --rm --entrypoint /usr/local/bin/llm-broker llm-broker:ci version
+      - name: image user is non-root
+        run: |
+          [ "$(docker inspect -f '{{.Config.User}}' llm-broker:ci)" = "llm-broker" ]
+          docker run --rm --entrypoint /usr/local/bin/llm-broker llm-broker:ci help

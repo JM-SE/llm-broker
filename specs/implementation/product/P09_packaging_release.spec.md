@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P09.
-- State: `pending`.
+- State: `ready_for_review`.
 - Prerequisite: accepted P08.
 - Runtime impact: disposable packaging/Compose environment only.
 
@@ -105,6 +105,63 @@ mode and can target a generic tested OpenAI-compatible endpoint.
 
 ## Handoff
 
-Include clean-start transcript, artifact/checksum list, image identity/scan,
-supported matrix, all checks, Git status, publication commands not yet executed,
-and a suggested commit/tag message. Mark product v1 `ready_for_review` and stop.
+### Changed Files
+
+- `Dockerfile` (multi-stage: golang:1.26 build, alpine runtime, dedicated
+  `llm-broker` user uid 10001, version ldflags from build args) and
+  `.dockerignore`.
+- `compose.example.yaml` + `deploy/compose/config.json` (fake mode,
+  metrics enabled, loopback host binds, healthchecks, one-shot `migrate`
+  service, restart policies) and `deploy/compose/seed.sql` (workload policy
+  seed matching the compose config).
+- `deploy/examples/systemd/`: `llm-broker-api.service`,
+  `llm-broker-worker.service` (dedicated user, EnvironmentFile, hardening,
+  restart policy) and setup/migration runbook README.
+- `Makefile`: `release` (linux/amd64 + linux/arm64 archives with LICENSE),
+  `checksums`, `image` targets with version/commit/buildtime ldflags.
+- `.github/workflows/release.yaml` (tag-triggered artifact builds +
+  checksums, no publishing) and `ci.yaml` (+govulncheck job, +container
+  build/smoke job).
+- `docs/quickstart.md` (compose fake quick start), `docs/openai-compatible.md`
+  (mapping, classification, variability), `docs/release.md` (supported
+  matrix, release checklist, dependency inventory, publication-not-run),
+  `docs/operations.md` (+rollback, +troubleshooting).
+- `specs/.../STATUS.md` and this spec: state updated.
+
+### Validation Evidence
+
+- Clean-start container rehearsal (transcript in handoff): compose build;
+  one-shot `migrate up` (version 3); seed; `up -d`; `/ready` 200; `client
+  create` + `client grant`; POST task with `Prefer: wait=30` →
+  `{"status":"succeeded", ...}` from the fake backend; `/metrics`
+  serves bounded labels; `down -v` cleanup.
+- Image: non-root user (`llm-broker`), single binary entrypoint, `version`
+  reports 0.1.0 metadata, help/usage intact; config/examples not baked in.
+- Artifacts: `dist/llm-broker-0.1.0-{linux-amd64,linux-arm64}.tar.gz` each
+  containing binary + LICENSE; `SHA256SUMS` generated; verified with
+  `tar -tzf`.
+- `go test -p 1 ./... -count=1` (14 packages ok, disposable DB),
+  `go vet ./...`, `gofmt -l .` (empty), `go mod verify`, `git diff --check`
+  clean; `govulncheck ./...` no vulnerabilities (P08 run).
+- Product source scan: no integration identifiers in product files.
+
+### Compatibility Questions
+
+- The compose config binds `0.0.0.0:8010` inside the container (host port
+  is loopback-only) — an explicit, documented public-bind acknowledgement
+  inside an isolated network.
+- Workload policies are seeded via SQL after migrate (no config-to-DB sync
+  command exists; the API reads policies from the database).
+- `commit=unknown` in the default image build: pass `--build-arg
+  COMMIT=$(git rev-parse --short HEAD)` for reproducible metadata.
+
+### Publication Commands (NOT EXECUTED)
+
+`git tag v0.1.0` / push, GitHub Release creation, `docker push`, `go
+install` publication — all deferred until explicit approval.
+
+### Suggested Commit Message
+
+`feat: P09 packaging and release candidate (Docker/compose fake-mode, systemd examples, release artifacts and checksums, docs)`
+
+Mark product v1 `ready_for_review`; stop for approval before the L-track.

@@ -2,9 +2,9 @@
 
 ## Current Gate
 
-- Current phase: P08, Security, Privacy, and Observability.
+- Current phase: P09, Packaging and Release Candidate.
 - State: `ready_for_review`.
-- Previous phases: P00 through P07 accepted.
+- Previous phases: P00 through P08 accepted.
 - Git policy: no automatic commits; P07 was committed by the assistant on
   explicit user request, otherwise changes are left for manual review and
   user commits.
@@ -21,8 +21,8 @@
 | P05 | `accepted` | approved |
 | P06 | `accepted` | approved |
 | P07 | `accepted` | approved |
-| P08 | `ready_for_review` | P07 accepted |
-| P09 | `blocked` | requires P08 |
+| P08 | `accepted` | approved (P08 gate waived per user instruction) |
+| P09 | `ready_for_review` | P08 accepted |
 
 ## Integration Track
 
@@ -92,9 +92,11 @@
   OpenAI-compatible mapping, conformance suite).
 - Product P07: accepted (worker and recovery, serial execution, persisted
   backoff, cancel semantics, ambiguous recovery CLI).
-- Product P08: ready for review (bounded metrics, sanitized event logging,
+- Product P08: accepted (bounded metrics, sanitized event logging,
   retention job, threat model, restore rehearsal).
+- Product P09: ready for review (packaging and release candidate, Docker,
+  compose fake-mode, systemd examples, release artifacts).
 
 ## Suggested Commit Message
 
-`feat: P08 security, privacy, and observability (bounded metrics, sanitized events, retention job, threat model, restore rehearsal)`
+`feat: P09 packaging and release candidate (Docker/compose fake-mode, systemd examples, release artifacts and checksums, docs)`

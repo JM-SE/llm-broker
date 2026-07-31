@@ -57,6 +57,29 @@ Real restore procedure:
 5. Verify `/ready` and a smoke task against the fake backend before real
    traffic.
 
+## Rollback
+
+1. Stop the worker first (`systemctl stop llm-broker-worker`) so no new
+   claims happen during the window.
+2. Deploy the previous binary.
+3. If a migration was applied: restore the pre-upgrade backup into a fresh
+   database of the same major version, verify `migrate status` matches the
+   previous binary, then point configuration at it. Forward-only policy:
+   never attempt to hand-edit `goose_db_version`.
+4. Verify `/ready` and one fake smoke task before resuming traffic.
+
+## Troubleshooting
+
+| Symptom | Cause / action |
+| --- | --- |
+| `/ready` 503 "no active worker" | worker down or heartbeat stale; check `systemctl status llm-broker-worker` and logs |
+| `/ready` 503 "ambiguous execution" | run `llm-broker worker status`, verify backend idle, `worker resolve` |
+| Tasks stay queued | worker blocked (see above) or lock lost; check `llm_broker_worker_leadership` |
+| `migrate status` mismatch at startup | schema version differs from binary; run `migrate up` explicitly after review |
+| Task failed `transient_unsent` | backend unreachable when the request was sent; check backend health |
+| Task failed `indeterminate` | outcome unknown; inspect with `worker status`, resolve with backend evidence |
+| API 503 on create | readiness failing; the API refuses to accept work it cannot schedule reliably |
+
 ## Fault Response
 
 - Worker process dies: systemd restarts it; leases expire; the queue is
