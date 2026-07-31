@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P05.
-- State: `ready_for_review`.
+- State: `accepted`.
 - Prerequisite: accepted P04.
 - Runtime impact: isolated PostgreSQL tests only; no backend inference.
 

@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P06.
-- State: `pending`.
+- State: `ready_for_review`.
 - Prerequisite: accepted P05.
 - Runtime impact: fake and local `httptest` servers only.
 
@@ -110,6 +110,54 @@ fake and generic OpenAI-compatible Chat Completions adapters.
 
 ## Handoff
 
-Include conformance matrix, HTTP fixture evidence, timeout/error classification,
-reasoning/redaction evidence, changed files, Git status, and a suggested commit
-message. Stop for approval before P07.
+### Changed Files
+
+- `internal/backend/`: `registry.go` (compile-time Registry, DefaultRegistry,
+  `RegisterDefault`), `none_controller.go` (fail-closed optional controller),
+  `features.go` (`CheckFeatures`), `registry_test.go`,
+  `default_registry_test.go` (external package proving built-in registration).
+- `internal/backend/fake/`: deterministic `fake.go` (delay, six fail modes,
+  structured kinds return `{}`, no network) plus `fake_test.go` and
+  conformance.
+- `internal/backend/openaicompat/`: `openaicompat.go` (Chat Completions
+  subset mapping, bounded transport with explicit connect/header/overall
+  budgets, redirects disabled, credential from env at construction,
+  reasoning discarded, conservative classification) plus
+  `openaicompat_test.go`, `parse_fuzz_test.go`.
+- `internal/backend/conformance/`: shared `conformance.go` suite (type
+  stability, normalized responses, classified errors, cancellation).
+- `docs/backends/adapter-development.md`: author guide and testing checklist.
+
+### Validation Evidence
+
+- `go test -race -p 1 ./...`: all 12 packages pass with integration DB.
+- `go vet ./...`, `go build ./...`, `gofmt -l .` (empty): clean.
+- Fuzz: `FuzzParseChatCompletion` 8s (one false-positive assertion fixed:
+  mutated inputs moved seed strings into content; the leak invariant is
+  structural — the response type has no reasoning field), plus existing
+  domain/config fuzz targets pass.
+- HTTP fixtures: golden request (model/messages/generation fields present;
+  frequency_penalty/presence_penalty/response_format/stream absent),
+  reasoning_content discarded, 400/401/404/429/500/502/301 classification,
+  malformed/oversized bodies, connect-refused (transient_unsent), slow
+  server and mid-body disconnect and cancellation (indeterminate),
+  structured output gated on declared feature.
+- No test uses the public network; no real model was called.
+
+### Compatibility Questions
+
+- `New` reads the credential from `credential_env` at construction time;
+  the worker must set those variables before constructing adapters (P07).
+- The default registry is populated by `init()` of the built-in packages;
+  the worker binary must blank-import them (P07 wiring).
+- `check` fail modes return the configured class without simulating
+  transport phases; transport-failure classification is exercised by the
+  openai_compat fixtures.
+- Redirect handling returns the 3xx status to the classifier
+  (`unexpected_status`, backend_rejected) — credentials never cross origins.
+
+### Suggested Commit Message
+
+`feat: P06 backend adapters (registry, deterministic fake, OpenAI-compatible mapping, conformance suite)`
+
+Stop for approval before P07.

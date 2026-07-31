@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"ChoiCes\":[{\"0000000000000\":\"000000\",\"messAge\":{\"Content\":\"hidden\"}}]}")
