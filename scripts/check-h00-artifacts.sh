@@ -48,20 +48,24 @@ h00_repo_absolute_files >"$files_file"
 h00_payload_files "$payload" >>"$files_file"
 sort -u -o "$files_file" "$files_file"
 
-secret_pattern='-----BEGIN (RSA|OPENSSH|EC|PRIVATE) KEY-----|postgres(ql)?://[^$[:space:]"'"']+:[^$[:space:]@"'"']+@|[Aa]uthorization:[[:space:]]*[Bb]earer[[:space:]]+[A-Za-z0-9._~+/=-]+'
 while IFS= read -r file; do
 	[[ "$file" == "$canary" ]] && continue
-	set +e
-	grep -IEn "$secret_pattern" "$file" >"$hit_file" 2>/dev/null
-	status=$?
-	set -e
-	if [[ "$status" -eq 0 ]]; then
-		echo "H00 secret/private artifact scan failed" >&2
-		exit 1
-	elif [[ "$status" -gt 1 ]]; then
-		 echo "H00 secret/private artifact scan could not inspect its target" >&2
-		exit 1
-	fi
+	for secret_pattern in \
+		'-----BEGIN (RSA|OPENSSH|EC|PRIVATE) KEY-----' \
+		'postgres(ql)?://[^$[:space:]\"]+:[^$[:space:]@\"]+@' \
+		'[Aa]uthorization:[[:space:]]*[Bb]earer[[:space:]]+[A-Za-z0-9._~+/=-]+'; do
+		set +e
+		grep -IEn -- "$secret_pattern" "$file" >"$hit_file" 2>/dev/null
+		status=$?
+		set -e
+		if [[ "$status" -eq 0 ]]; then
+			echo "H00 secret/private artifact scan failed" >&2
+			exit 1
+		elif [[ "$status" -gt 1 ]]; then
+			echo "H00 secret/private artifact scan could not inspect its target" >&2
+			exit 1
+		fi
+	done
 done <"$files_file"
 
 for inventory in "$H00_PRIVATE_PATH_PREFIXES_FILE" "$H00_CONCRETE_INTEGRATION_NAMES_FILE"; do

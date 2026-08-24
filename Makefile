@@ -30,6 +30,7 @@ fmt-check:
 	if [ -n "$$files" ]; then printf '%s\n' "$$files"; exit 1; fi
 
 scan:
+	./scripts/h00-scan-contract-test.sh
 	./scripts/check-h00-boundaries.sh
 
 

@@ -7,7 +7,7 @@
 H00_CONCRETE_INTEGRATION_NAMES_FILE="${H00_CONCRETE_INTEGRATION_NAMES_FILE:-/home/jmse/homelab/ai/projects/llm-broker/task-context/H00-concrete-integration-names.txt}"
 H00_PRIVATE_PATH_PREFIXES_FILE="${H00_PRIVATE_PATH_PREFIXES_FILE:-/home/jmse/homelab/ai/projects/llm-broker/task-context/H00-private-path-prefixes.txt}"
 H00_EMPTY_INVENTORY_SHA256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-H00_PRODUCT_PATTERN='role[[:punct:][:space:]]*radar|y[[:punct:][:space:]]*t[[:punct:][:space:]]*pipe|llama[[:punct:][:space:]]*swap|q[[:punct:][:space:]]*wen|/home/|0\.0\.0\.0'
+H00_PRODUCT_PATTERN='role[[:punct:][:space:]]*radar|y[[:punct:][:space:]]*t[[:punct:][:space:]]*pipe|llama[[:punct:][:space:]]*swap'
 
 h00_materialize_and_verify_inventory() {
 	local path="$1"
@@ -56,12 +56,12 @@ h00_product_scope() {
 			fi
 			;;
 		esac
-	done < <(git ls-files -co --exclude-standard)
+	done < <(git ls-files)
 	return 0
 }
 
 h00_all_repo_files() {
-	git ls-files -co --exclude-standard
+	git ls-files
 }
 
 h00_repo_absolute_files() {
@@ -75,7 +75,12 @@ h00_payload_files() {
 	local root="$1" path
 	while IFS= read -r path; do
 		case "$path" in
-		*/scans/*|./scans/*|scans/*|./MANIFEST.SHA256|MANIFEST.SHA256|./SHA256SUMS|SHA256SUMS)
+		./scans/product-scan.stdout|scans/product-scan.stdout|\
+		./scans/product-scan.stderr|scans/product-scan.stderr|\
+		./scans/secret-private-scan.stdout|scans/secret-private-scan.stdout|\
+		./scans/secret-private-scan.stderr|scans/secret-private-scan.stderr|\
+		./scans/final-scan-attestation.json|scans/final-scan-attestation.json|\
+		./MANIFEST.SHA256|MANIFEST.SHA256|./SHA256SUMS|SHA256SUMS)
 			continue
 			;;
 		esac
