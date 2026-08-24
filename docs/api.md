@@ -13,21 +13,32 @@ durable records that a worker (later phases) picks up.
    llm-broker migrate up
    ```
 
-2. Seed workload policies. The API enforces policy rows from the database;
-   capabilities are validated against the configuration. (A sync command is
-   future work; for now policies are inserted by the operator.)
-
-3. Provision a client credential. The token is displayed exactly once:
+2. Validate and apply configuration v2 policy with the provisioner role:
 
    ```sh
-   llm-broker client create ops         # prints: credential (shown once, not recoverable)
-   llm-broker client grant ops default  # grant a workload
-   llm-broker client disable ops        # reject the credential
-   llm-broker client revoke ops         # rotate: prints a new credential once
+   llm-broker policy validate [config]
+   llm-broker policy diff [config]   # exit 2 means configured drift
+   llm-broker policy apply [config]
+   llm-broker policy status [config]
    ```
 
-   Both commands read `$LLM_BROKER_CONFIG_FILE` and the database URL from the
-   environment variable configured as `database.url_env`.
+   Apply is transactional and stores a secret-free topology digest. API and
+   worker refuse startup until every locally configured workload is applied.
+
+3. Provision a client credential. The token is written only to an exclusive
+   mode-0600 file and is never displayed:
+
+   ```sh
+   llm-broker client create ops --credential-file /secure/path/ops.credential
+   llm-broker client grant ops default   # grant a workload
+   llm-broker client ungrant ops default # remove only that grant
+   llm-broker client disable ops        # reject the credential
+   llm-broker client revoke ops --credential-file /secure/path/ops.credential.new
+   ```
+
+   Client lifecycle and grant commands require the provisioner URL environment
+   configured as `database.provisioner_url_env`; they never fall back to the
+   runtime credential.
 
 4. Start the API (loopback by default):
 

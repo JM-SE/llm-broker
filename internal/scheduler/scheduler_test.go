@@ -95,7 +95,7 @@ func TestTieBreakByCreatedAtThenID(t *testing.T) {
 	// Force identical creation times: ordering falls to the task ID.
 	ts := time.Now().UTC()
 	for _, id := range []interface{}{first, second} {
-		if _, err := adminStore.Pool().Exec(context.Background(),
+		if _, err := adminDB.ExecContext(context.Background(),
 			"UPDATE tasks SET created_at = $2 WHERE id = $1", id, ts); err != nil {
 			t.Fatalf("pin created_at: %v", err)
 		}
@@ -118,7 +118,7 @@ func TestExhaustedAttemptsExcluded(t *testing.T) {
 	policy := mustPolicy(t, "attempts-policy", "normal", 2)
 	mustGrant(t, client.ID, policy.ID)
 	id := mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
-	if _, err := adminStore.Pool().Exec(context.Background(),
+	if _, err := adminDB.ExecContext(context.Background(),
 		"UPDATE tasks SET attempts = 2 WHERE id = $1", id); err != nil {
 		t.Fatalf("set attempts: %v", err)
 	}
@@ -133,20 +133,24 @@ func TestExhaustedAttemptsExcluded(t *testing.T) {
 	}
 }
 
-func TestNotGrantedExcluded(t *testing.T) {
+func TestNotGrantedRemainsClaimableForWorkerPreflight(t *testing.T) {
 	clearQueued(t)
 	client := mustClient(t, "grant-client")
 	policy := mustPolicy(t, "grant-policy", "normal", 3)
-	// No grant: the task must not be eligible.
-	mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
+	// No grant: the scheduler still claims it so worker preflight can
+	// terminalize the revoked queued task instead of stranding it.
+	id := mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
 
 	_, s := newScheduler(t)
 	res, err := s.ClaimNext(context.Background())
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if !res.NoTask {
-		t.Fatalf("claimed a task whose client has no grant: %s", res.Task.ID)
+	if res.NoTask {
+		t.Fatal("revoked queued task was stranded by scheduler eligibility")
+	}
+	if res.Task.ID != id || res.Task.WorkloadSlug != policy.Name {
+		t.Fatalf("claim projection = id %s slug %q, want %s %q", res.Task.ID, res.Task.WorkloadSlug, id, policy.Name)
 	}
 }
 

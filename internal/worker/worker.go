@@ -40,8 +40,12 @@ type Options struct {
 	Registry     *backend.Registry
 	Capabilities map[string]config.Capability
 	Backends     map[string]config.BackendConfig
-	Policy       scheduler.Policy
-	Logger       *slog.Logger
+	// ConfiguredWorkloads is the worker's immutable local membership and
+	// topology proof, keyed by workload slug. It is deliberately separate from
+	// mutable durable workload policy.
+	ConfiguredWorkloads map[string][32]byte
+	Policy              scheduler.Policy
+	Logger              *slog.Logger
 
 	// Now is the clock seam for retry scheduling (defaults to time.Now).
 	Now func() time.Time
@@ -63,22 +67,25 @@ type Options struct {
 
 // Worker owns the active execution loop.
 type Worker struct {
-	store             *postgres.Store
-	sched             *scheduler.Scheduler
-	leader            *scheduler.Leader
-	registry          *backend.Registry
-	capabilities      map[string]config.Capability
-	backends          map[string]config.BackendConfig
-	policy            scheduler.Policy
-	log               *slog.Logger
-	metrics           *metrics.Metrics
-	now               func() time.Time
-	rng               *rand.Rand
-	claimPoll         time.Duration
-	drainTimeout      time.Duration
-	retentionInterval time.Duration
-	retentionBatch    int
-	wg                sync.WaitGroup // in-flight bookkeeping goroutines
+	store               *postgres.Store
+	sched               *scheduler.Scheduler
+	leader              *scheduler.Leader
+	registry            *backend.Registry
+	capabilities        map[string]config.Capability
+	backends            map[string]config.BackendConfig
+	configuredWorkloads map[string][32]byte
+	policy              scheduler.Policy
+	log                 *slog.Logger
+	metrics             *metrics.Metrics
+	now                 func() time.Time
+	rng                 *rand.Rand
+	claimPoll           time.Duration
+	drainTimeout        time.Duration
+	retentionInterval   time.Duration
+	retentionBatch      int
+	wg                  sync.WaitGroup // in-flight bookkeeping goroutines
+	stateMu             sync.RWMutex
+	operationalErr      error
 }
 
 // New builds a worker with defaults for zero values.
@@ -111,25 +118,43 @@ func New(opts Options) *Worker {
 		opts.RetentionBatch = DefaultRetentionBatch
 	}
 	w := &Worker{
-		store:             opts.Store,
-		sched:             opts.Scheduler,
-		leader:            opts.Leader,
-		registry:          opts.Registry,
-		capabilities:      opts.Capabilities,
-		backends:          opts.Backends,
-		policy:            opts.Policy,
-		log:               opts.Logger,
-		metrics:           opts.Metrics,
-		now:               opts.Now,
-		rng:               opts.Rand,
-		claimPoll:         opts.ClaimPoll,
-		drainTimeout:      opts.DrainTimeout,
-		retentionInterval: opts.RetentionInterval,
-		retentionBatch:    opts.RetentionBatch,
+		store:               opts.Store,
+		sched:               opts.Scheduler,
+		leader:              opts.Leader,
+		registry:            opts.Registry,
+		capabilities:        opts.Capabilities,
+		backends:            opts.Backends,
+		configuredWorkloads: opts.ConfiguredWorkloads,
+		policy:              opts.Policy,
+		log:                 opts.Logger,
+		metrics:             opts.Metrics,
+		now:                 opts.Now,
+		rng:                 opts.Rand,
+		claimPoll:           opts.ClaimPoll,
+		drainTimeout:        opts.DrainTimeout,
+		retentionInterval:   opts.RetentionInterval,
+		retentionBatch:      opts.RetentionBatch,
 	}
 	w.leader.SetMetrics(w.metrics)
 	w.sched.SetMetrics(w.metrics)
 	return w
+}
+
+func (w *Worker) setOperationalFailure(err error) {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	if w.operationalErr == nil {
+		w.operationalErr = err
+	}
+}
+
+// OperationalFailure reports the fail-closed condition that stopped new
+// claims. It is intentionally read-only; correction requires operator action
+// or a restart with coherent configuration.
+func (w *Worker) OperationalFailure() error {
+	w.stateMu.RLock()
+	defer w.stateMu.RUnlock()
+	return w.operationalErr
 }
 
 // Run acquires leadership (standing by while another worker is active),
@@ -155,6 +180,10 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 	w.log.Info("worker active", "worker_id", w.leader.WorkerID())
 	defer w.leader.Release()
+	if w.OperationalFailure() != nil {
+		w.leader.Release()
+		return w.waitOperational(ctx)
+	}
 
 	// Maintenance loops run while this process is the active worker; they
 	// terminate on shutdown and never touch running tasks.
@@ -182,6 +211,9 @@ func (w *Worker) loop(ctx context.Context) error {
 			w.log.Info("worker stopping: no new claims after shutdown")
 			return w.drain(ctx)
 		default:
+		}
+		if w.OperationalFailure() != nil {
+			return w.waitOperational(ctx)
 		}
 		if !w.leader.Held() {
 			return errors.New("execution lock lost; stopping claims")
@@ -211,9 +243,25 @@ func (w *Worker) loop(ctx context.Context) error {
 			continue
 		}
 		if err := w.execute(ctx, res.Task); err != nil {
+			if errors.Is(err, postgres.ErrPreflightOperational) {
+				w.setOperationalFailure(err)
+				// Keep the cause on OperationalFailure for internal diagnosis,
+				// but expose only the stable operational category to logs.
+				w.log.Error("worker entering operational fail-closed state; no further claims",
+					"error", postgres.ErrPreflightOperational.Error())
+				// Release the active heartbeat/leadership so the API readiness
+				// surface becomes false while this process awaits correction.
+				w.leader.Release()
+				return w.waitOperational(ctx)
+			}
 			return fmt.Errorf("execute task %s: %w", res.Task.ID, err)
 		}
 	}
+}
+
+func (w *Worker) waitOperational(ctx context.Context) error {
+	<-ctx.Done()
+	return w.drain(ctx)
 }
 
 // drain lets the in-flight inference finish under its own workload

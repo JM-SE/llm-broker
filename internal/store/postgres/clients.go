@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/JM-SE/llm-broker/internal/policy"
 )
 
 // Client is the identity row. credential_digest holds a strong one-way hash of
@@ -31,16 +33,26 @@ type CreateClientParams struct {
 	Enabled              bool
 }
 
-// CreateClient inserts a client. A duplicate name yields ErrConflict.
+// CreateClient inserts a client. A duplicate name yields ErrConflict. The
+// name lock serializes creation before a numeric client ID exists.
 func (s *Store) CreateClient(ctx context.Context, p CreateClientParams) (Client, error) {
 	var c Client
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO clients (name, credential_identifier, credential_digest, enabled)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, name, credential_identifier, credential_digest, enabled, created_at, updated_at`,
-		p.Name, p.CredentialIdentifier, p.CredentialDigest, p.Enabled).Scan(
-		&c.ID, &c.Name, &c.CredentialIdentifier, &c.CredentialDigest, &c.Enabled,
-		&c.CreatedAt, &c.UpdatedAt)
+	err := s.withTx(ctx, func(tx pgx.Tx) error {
+		key, err := policy.ClientNameLockKey(p.Name)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+			return fmt.Errorf("acquire client name lock: %w", err)
+		}
+		return tx.QueryRow(ctx, `
+			INSERT INTO clients (name, credential_identifier, credential_digest, enabled)
+			VALUES ($1, $2, $3, $4)
+			RETURNING id, name, credential_identifier, credential_digest, enabled, created_at, updated_at`,
+			p.Name, p.CredentialIdentifier, p.CredentialDigest, p.Enabled).Scan(
+			&c.ID, &c.Name, &c.CredentialIdentifier, &c.CredentialDigest, &c.Enabled,
+			&c.CreatedAt, &c.UpdatedAt)
+	})
 	if isUniqueViolation(err) {
 		return Client{}, fmt.Errorf("%w: client %q already exists", ErrConflict, p.Name)
 	}
@@ -90,13 +102,22 @@ func (s *Store) GetClientByIdentifier(ctx context.Context, identifier string) (C
 // of a client, invalidating the previous token.
 func (s *Store) RotateClientCredential(ctx context.Context, clientID int64, identifier string, digest []byte) (Client, error) {
 	var c Client
-	err := s.pool.QueryRow(ctx, `
+	err := s.withTx(ctx, func(tx pgx.Tx) error {
+		key, err := policy.ClientLockKey(clientID)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `
 		UPDATE clients
 		SET credential_identifier = $2, credential_digest = $3, updated_at = now()
 		WHERE id = $1
 		RETURNING `+clientColumns, clientID, identifier, digest).Scan(
-		&c.ID, &c.Name, &c.CredentialIdentifier, &c.CredentialDigest, &c.Enabled,
-		&c.CreatedAt, &c.UpdatedAt)
+			&c.ID, &c.Name, &c.CredentialIdentifier, &c.CredentialDigest, &c.Enabled,
+			&c.CreatedAt, &c.UpdatedAt)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Client{}, ErrNotFound
 	}
@@ -105,130 +126,90 @@ func (s *Store) RotateClientCredential(ctx context.Context, clientID int64, iden
 
 // SetClientEnabled toggles a client's enabled state.
 func (s *Store) SetClientEnabled(ctx context.Context, clientID int64, enabled bool) error {
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE clients SET enabled = $2, updated_at = now() WHERE id = $1`,
-		clientID, enabled)
+	return s.withTx(ctx, func(tx pgx.Tx) error {
+		key, err := policy.ClientLockKey(clientID)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE clients SET enabled = $2, updated_at = now() WHERE id = $1`,
+			clientID, enabled)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+// GrantWorkloadBySlug grants using the immutable workload identity. The lock
+// is acquired from the slug before the workload row is used for mutation.
+func (s *Store) GrantWorkloadBySlug(ctx context.Context, clientID int64, slug string) error {
+	workloadKey, err := policy.PolicyLockKey(slug)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	grantKey, err := policy.GrantAdmissionLockKey(clientID, slug)
+	if err != nil {
+		return err
 	}
-	return nil
+	return s.withTx(ctx, func(tx pgx.Tx) error {
+		clientKey, err := policy.ClientLockKey(clientID)
+		if err != nil {
+			return err
+		}
+		for _, key := range []int64{clientKey, workloadKey, grantKey} {
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+				return err
+			}
+		}
+		var workloadID int64
+		if err := tx.QueryRow(ctx, `SELECT id FROM workload_policies WHERE name=$1`, slug).Scan(&workloadID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO client_workload_grants (client_id, workload_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, clientID, workloadID)
+		return err
+	})
 }
 
-// WorkloadPolicy is the operator-defined policy row synced from configuration.
-type WorkloadPolicy struct {
-	ID                       int64
-	Name                     string
-	PriorityClass            string
-	MaxActiveTasks           int
-	MaxAttempts              int
-	RetryDelaysSeconds       []int
-	MaxOutputTokens          int
-	AllowedGeneration        []byte
-	RequiredFeatures         []string
-	WorkloadTimeoutSeconds   int
-	PayloadRetentionSeconds  int64
-	ResultRetentionSeconds   int64
-	MetadataRetentionSeconds int64
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
-}
-
-// UpsertWorkloadPolicy inserts or replaces a workload policy by name.
-func (s *Store) UpsertWorkloadPolicy(ctx context.Context, p WorkloadPolicy) (WorkloadPolicy, error) {
-	var out WorkloadPolicy
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO workload_policies (
-			name, priority_class, max_active_tasks, max_attempts, retry_delays_seconds,
-			max_output_tokens, allowed_generation, required_features,
-			workload_timeout_seconds,
-			payload_retention_seconds, result_retention_seconds, metadata_retention_seconds)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12)
-		ON CONFLICT (name) DO UPDATE SET
-			priority_class = EXCLUDED.priority_class,
-			max_active_tasks = EXCLUDED.max_active_tasks,
-			max_attempts = EXCLUDED.max_attempts,
-			retry_delays_seconds = EXCLUDED.retry_delays_seconds,
-			max_output_tokens = EXCLUDED.max_output_tokens,
-			allowed_generation = EXCLUDED.allowed_generation,
-			required_features = EXCLUDED.required_features,
-			workload_timeout_seconds = EXCLUDED.workload_timeout_seconds,
-			payload_retention_seconds = EXCLUDED.payload_retention_seconds,
-			result_retention_seconds = EXCLUDED.result_retention_seconds,
-			metadata_retention_seconds = EXCLUDED.metadata_retention_seconds,
-			updated_at = now()
-		RETURNING id, name, priority_class, max_active_tasks, max_attempts,
-			retry_delays_seconds, max_output_tokens, allowed_generation,
-			required_features, workload_timeout_seconds,
-			payload_retention_seconds, result_retention_seconds,
-			metadata_retention_seconds, created_at, updated_at`,
-		p.Name, p.PriorityClass, p.MaxActiveTasks, p.MaxAttempts,
-		p.RetryDelaysSeconds, p.MaxOutputTokens, string(p.AllowedGeneration),
-		p.RequiredFeatures, p.WorkloadTimeoutSeconds,
-		p.PayloadRetentionSeconds, p.ResultRetentionSeconds,
-		p.MetadataRetentionSeconds).Scan(
-		&out.ID, &out.Name, &out.PriorityClass, &out.MaxActiveTasks, &out.MaxAttempts,
-		&out.RetryDelaysSeconds, &out.MaxOutputTokens, &out.AllowedGeneration,
-		&out.RequiredFeatures, &out.WorkloadTimeoutSeconds,
-		&out.PayloadRetentionSeconds, &out.ResultRetentionSeconds,
-		&out.MetadataRetentionSeconds, &out.CreatedAt, &out.UpdatedAt)
-	return out, err
-}
-
-// GetWorkloadPolicyByName returns a workload policy by name.
-func (s *Store) GetWorkloadPolicyByName(ctx context.Context, name string) (WorkloadPolicy, error) {
-	return s.getWorkloadPolicy(ctx,
-		`SELECT id, name, priority_class, max_active_tasks, max_attempts,
-			retry_delays_seconds, max_output_tokens, allowed_generation,
-			required_features, workload_timeout_seconds,
-			payload_retention_seconds, result_retention_seconds,
-			metadata_retention_seconds, created_at, updated_at
-		FROM workload_policies WHERE name = $1`, name)
-}
-
-// GetWorkloadPolicyByID returns a workload policy by ID.
-func (s *Store) GetWorkloadPolicyByID(ctx context.Context, id int64) (WorkloadPolicy, error) {
-	return s.getWorkloadPolicy(ctx,
-		`SELECT id, name, priority_class, max_active_tasks, max_attempts,
-			retry_delays_seconds, max_output_tokens, allowed_generation,
-			required_features, workload_timeout_seconds,
-			payload_retention_seconds, result_retention_seconds,
-			metadata_retention_seconds, created_at, updated_at
-		FROM workload_policies WHERE id = $1`, id)
-}
-
-func (s *Store) getWorkloadPolicy(ctx context.Context, query string, arg any) (WorkloadPolicy, error) {
-	var p WorkloadPolicy
-	err := s.pool.QueryRow(ctx, query, arg).Scan(
-		&p.ID, &p.Name, &p.PriorityClass, &p.MaxActiveTasks, &p.MaxAttempts,
-		&p.RetryDelaysSeconds, &p.MaxOutputTokens, &p.AllowedGeneration,
-		&p.RequiredFeatures, &p.WorkloadTimeoutSeconds,
-		&p.PayloadRetentionSeconds, &p.ResultRetentionSeconds,
-		&p.MetadataRetentionSeconds, &p.CreatedAt, &p.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return WorkloadPolicy{}, ErrNotFound
+// RevokeWorkloadBySlug removes only the selected grant.
+func (s *Store) RevokeWorkloadBySlug(ctx context.Context, clientID int64, slug string) error {
+	workloadKey, err := policy.PolicyLockKey(slug)
+	if err != nil {
+		return err
 	}
-	return p, err
-}
-
-// GrantWorkload grants a workload to a client (idempotent).
-func (s *Store) GrantWorkload(ctx context.Context, clientID, workloadID int64) error {
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO client_workload_grants (client_id, workload_id)
-		VALUES ($1, $2)
-		ON CONFLICT (client_id, workload_id) DO NOTHING`,
-		clientID, workloadID)
-	return err
-}
-
-// RevokeWorkload removes a workload grant.
-func (s *Store) RevokeWorkload(ctx context.Context, clientID, workloadID int64) error {
-	_, err := s.pool.Exec(ctx, `
-		DELETE FROM client_workload_grants WHERE client_id = $1 AND workload_id = $2`,
-		clientID, workloadID)
-	return err
+	grantKey, err := policy.GrantAdmissionLockKey(clientID, slug)
+	if err != nil {
+		return err
+	}
+	return s.withTx(ctx, func(tx pgx.Tx) error {
+		clientKey, err := policy.ClientLockKey(clientID)
+		if err != nil {
+			return err
+		}
+		for _, key := range []int64{clientKey, workloadKey, grantKey} {
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+				return err
+			}
+		}
+		var workloadID int64
+		if err := tx.QueryRow(ctx, `SELECT id FROM workload_policies WHERE name=$1`, slug).Scan(&workloadID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM client_workload_grants WHERE client_id=$1 AND workload_id=$2`, clientID, workloadID)
+		return err
+	})
 }
 
 // ClientHasWorkload reports whether a client is granted a workload.

@@ -9,13 +9,13 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/JM-SE/llm-broker/internal/auth"
-	"github.com/JM-SE/llm-broker/internal/config"
 	"github.com/JM-SE/llm-broker/internal/domain"
 	"github.com/JM-SE/llm-broker/internal/store/postgres"
 )
@@ -127,50 +127,6 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	policy, err := s.store.GetWorkloadPolicyByName(r.Context(), sub.Workload)
-	if errors.Is(err, postgres.ErrNotFound) {
-		writeProblem(w, http.StatusForbidden, codeForbidden, "forbidden",
-			"workload unknown or not granted")
-		return
-	}
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-
-	has, err := s.store.ClientHasWorkload(r.Context(), ident.ClientID, policy.ID)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	if !has {
-		writeProblem(w, http.StatusForbidden, codeForbidden, "forbidden",
-			"workload unknown or not granted")
-		return
-	}
-
-	if _, ok := s.cfg.Capabilities[sub.Capability]; !ok {
-		writeProblem(w, http.StatusUnprocessableEntity, codeUnprocessable, "invalid task",
-			"unknown capability")
-		return
-	}
-
-	if err := s.enforceGenerationPolicy(policy, sub); err != nil {
-		writeProblem(w, http.StatusUnprocessableEntity, codeUnprocessable, "invalid task", err.Error())
-		return
-	}
-
-	active, err := s.store.CountActiveTasks(r.Context(), ident.ClientID, policy.ID)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	if active >= int64(policy.MaxActiveTasks) {
-		writeProblem(w, http.StatusTooManyRequests, codeAdmissionLimited, "admission limited",
-			"client activity limit reached for this workload")
-		return
-	}
-
 	hash, err := sub.RequestHash()
 	if err != nil {
 		s.internalError(w, r, err)
@@ -187,14 +143,43 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := s.store.CreateTask(r.Context(), postgres.CreateTaskParams{
-		ClientID:       ident.ClientID,
-		WorkloadID:     policy.ID,
-		Capability:     sub.Capability,
-		IdempotencyKey: key,
-		RequestHash:    hashBytes,
-		Payload:        canon,
+	res, err := s.store.SubmitTask(r.Context(), postgres.SubmissionParams{
+		ClientID:              ident.ClientID,
+		CredentialDigestProof: ident.DigestProof,
+		WorkloadSlug:          sub.Workload,
+		Capability:            sub.Capability,
+		IdempotencyKey:        key,
+		RequestHash:           hashBytes,
+		Payload:               canon,
+		Submission:            sub,
+		LocalMembership:       configuredWorkload(s, sub.Workload),
+		CapabilityKnown:       configuredCapability(s, sub.Capability),
+		LocalTopologyDigest:   configuredTopologyDigest(s),
+		ConfiguredTopologies:  configuredTopologyProof(s),
 	})
+	if errors.Is(err, postgres.ErrSubmissionCredentialInvalid) {
+		writeProblem(w, http.StatusUnauthorized, codeUnauthorized,
+			"authentication failed", "invalid credential")
+		return
+	}
+	if errors.Is(err, postgres.ErrSubmissionForbidden) {
+		writeForbidden(w)
+		return
+	}
+	if errors.Is(err, postgres.ErrSubmissionTopology) {
+		writeProblem(w, http.StatusServiceUnavailable, codeUnavailable,
+			"broker unavailable", "configured topology is not coherent")
+		return
+	}
+	if errors.Is(err, postgres.ErrSubmissionGeneration) {
+		writeProblem(w, http.StatusUnprocessableEntity, codeUnprocessable, "invalid task", err.Error())
+		return
+	}
+	if errors.Is(err, postgres.ErrSubmissionAdmission) {
+		writeProblem(w, http.StatusTooManyRequests, codeAdmissionLimited, "admission limited",
+			"client activity limit reached for this workload")
+		return
+	}
 	if errors.Is(err, postgres.ErrConflict) {
 		writeProblem(w, http.StatusConflict, codeIdempotencyConflict, "idempotency conflict",
 			"Idempotency-Key was already used with a different request")
@@ -205,11 +190,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := s.store.GetTaskByClient(r.Context(), res.TaskID, ident.ClientID)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
+	task := res.Task
 
 	w.Header().Set("Location", "/v1/tasks/"+task.ID.String())
 
@@ -224,11 +205,51 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Retry-After", "1")
-		writeJSON(w, http.StatusAccepted, toTaskResponse(task, policy.Name))
+		writeJSON(w, http.StatusAccepted, toTaskResponse(task, res.Policy.Name))
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, toTaskResponse(task, policy.Name))
+	writeJSON(w, http.StatusCreated, toTaskResponse(task, res.Policy.Name))
+}
+
+func configuredWorkload(s *Server, slug string) bool {
+	if s.cfg == nil || s.cfg.Workloads == nil {
+		return false
+	}
+	_, ok := s.cfg.Workloads[slug]
+	return ok
+}
+
+func configuredCapability(s *Server, capability string) bool {
+	if s.cfg == nil || s.cfg.Capabilities == nil {
+		return false
+	}
+	_, ok := s.cfg.Capabilities[capability]
+	return ok
+}
+
+func configuredTopologyDigest(s *Server) [32]byte {
+	if s.cfg == nil {
+		return [32]byte{}
+	}
+	return s.cfg.TopologyDigest()
+}
+
+func configuredTopologyProof(s *Server) []postgres.ConfiguredWorkloadTopology {
+	if s.cfg == nil || len(s.cfg.Workloads) == 0 {
+		return nil
+	}
+	digest := s.cfg.TopologyDigest()
+	names := make([]string, 0, len(s.cfg.Workloads))
+	for name := range s.cfg.Workloads {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	proof := make([]postgres.ConfiguredWorkloadTopology, 0, len(names))
+	for _, name := range names {
+		proof = append(proof, postgres.ConfiguredWorkloadTopology{Slug: name, Digest: digest})
+	}
+	return proof
 }
 
 // errPreferTooLong distinguishes a syntactically valid but out-of-range wait
@@ -275,86 +296,6 @@ func (s *Server) writeSubmissionError(w http.ResponseWriter, r *http.Request, er
 		writeProblem(w, http.StatusUnprocessableEntity, codeUnprocessable, "invalid task",
 			err.Error())
 	}
-}
-
-// enforceGenerationPolicy applies the workload policy's generation bounds to
-// the normalized submission.
-func (s *Server) enforceGenerationPolicy(policy postgres.WorkloadPolicy, sub *domain.TaskSubmission) error {
-	var allowed map[string]config.GenerationConstraint
-	if len(policy.AllowedGeneration) > 0 && string(policy.AllowedGeneration) != "{}" {
-		if err := json.Unmarshal(policy.AllowedGeneration, &allowed); err != nil {
-			return fmt.Errorf("workload policy data invalid: %w", err)
-		}
-	}
-	if policy.MaxOutputTokens > 0 && sub.Generation.MaxTokens != nil &&
-		*sub.Generation.MaxTokens > int64(policy.MaxOutputTokens) {
-		return fmt.Errorf("max_tokens %d exceeds the workload limit %d",
-			*sub.Generation.MaxTokens, policy.MaxOutputTokens)
-	}
-	for field, c := range allowed {
-		switch field {
-		case "max_tokens":
-			if v := sub.Generation.MaxTokens; v != nil {
-				if c.Min != nil && float64(*v) < *c.Min {
-					return fmt.Errorf("max_tokens %d is below the workload minimum %v", *v, *c.Min)
-				}
-				if c.Max != nil && float64(*v) > *c.Max {
-					return fmt.Errorf("max_tokens %d exceeds the workload maximum %v", *v, *c.Max)
-				}
-			}
-		case "temperature":
-			if v := sub.Generation.Temperature; v != nil {
-				if c.Min != nil && *v < *c.Min {
-					return fmt.Errorf("temperature %v is below the workload minimum %v", *v, *c.Min)
-				}
-				if c.Max != nil && *v > *c.Max {
-					return fmt.Errorf("temperature %v exceeds the workload maximum %v", *v, *c.Max)
-				}
-			}
-		case "top_p":
-			if v := sub.Generation.TopP; v != nil {
-				if c.Min != nil && *v < *c.Min {
-					return fmt.Errorf("top_p %v is below the workload minimum %v", *v, *c.Min)
-				}
-				if c.Max != nil && *v > *c.Max {
-					return fmt.Errorf("top_p %v exceeds the workload maximum %v", *v, *c.Max)
-				}
-			}
-		case "min_p":
-			if v := sub.Generation.MinP; v != nil {
-				if c.Min != nil && *v < *c.Min {
-					return fmt.Errorf("min_p %v is below the workload minimum %v", *v, *c.Min)
-				}
-				if c.Max != nil && *v > *c.Max {
-					return fmt.Errorf("min_p %v exceeds the workload maximum %v", *v, *c.Max)
-				}
-			}
-		case "top_k":
-			if v := sub.Generation.TopK; v != nil {
-				if c.Min != nil && float64(*v) < *c.Min {
-					return fmt.Errorf("top_k %d is below the workload minimum %v", *v, *c.Min)
-				}
-				if c.Max != nil && float64(*v) > *c.Max {
-					return fmt.Errorf("top_k %d exceeds the workload maximum %v", *v, *c.Max)
-				}
-			}
-		case "seed":
-			if v := sub.Generation.Seed; v != nil {
-				if c.Min != nil && float64(*v) < *c.Min {
-					return fmt.Errorf("seed %d is below the workload minimum %v", *v, *c.Min)
-				}
-				if c.Max != nil && float64(*v) > *c.Max {
-					return fmt.Errorf("seed %d exceeds the workload maximum %v", *v, *c.Max)
-				}
-			}
-		case "stop":
-			if c.MaxItems != nil && len(sub.Generation.Stop) > *c.MaxItems {
-				return fmt.Errorf("stop has %d entries, workload maximum %d",
-					len(sub.Generation.Stop), *c.MaxItems)
-			}
-		}
-	}
-	return nil
 }
 
 // waitTerminal polls the durable task state until it reaches a terminal

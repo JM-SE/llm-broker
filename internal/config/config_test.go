@@ -11,16 +11,16 @@ import (
 
 func validConfigJSON() string {
 	return `{
-		"version": 1,
+		"version": 2,
 		"api": {"listen": "127.0.0.1:8010"},
-		"database": {"url_env": "LLM_BROKER_DATABASE_URL"},
+		"database": {"url_env": "LLM_BROKER_DATABASE_URL", "provisioner_url_env": "LLM_BROKER_PROVISIONER_DATABASE_URL", "migration_url_env": "LLM_BROKER_MIGRATION_DATABASE_URL"},
 		"retention": {"payload": "1h", "result": "168h", "metadata": "720h"},
 		"backends": {
 			"fake": {"type": "fake"}
 		},
 		"capabilities": {"instruct": {"backend": "fake"}},
 		"workloads": {
-			"default": {"priority_class": "normal"}
+			"default": {"priority_class": "normal", "allowed_capabilities": ["instruct"], "workload_timeout_seconds": 300}
 		}
 	}`
 }
@@ -30,7 +30,7 @@ func TestDecodeValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if cfg.Version != 1 {
+	if cfg.Version != 2 {
 		t.Errorf("version = %d", cfg.Version)
 	}
 	// Defaults applied.
@@ -51,15 +51,47 @@ func TestDecodeValid(t *testing.T) {
 	}
 }
 
+func TestDatabaseRoleEnvironmentReferencesAreDistinctAndRequired(t *testing.T) {
+	cases := []string{
+		`{"url_env":"LLM_BROKER_DATABASE_URL","provisioner_url_env":"LLM_BROKER_DATABASE_URL","migration_url_env":"LLM_BROKER_MIGRATION_DATABASE_URL"}`,
+		`{"url_env":"LLM_BROKER_DATABASE_URL","provisioner_url_env":"LLM_BROKER_PROVISIONER_DATABASE_URL"}`,
+	}
+	for _, database := range cases {
+		doc := strings.Replace(validConfigJSON(), `{"url_env": "LLM_BROKER_DATABASE_URL", "provisioner_url_env": "LLM_BROKER_PROVISIONER_DATABASE_URL", "migration_url_env": "LLM_BROKER_MIGRATION_DATABASE_URL"}`, database, 1)
+		if _, err := Decode(strings.NewReader(doc)); err == nil {
+			t.Errorf("database role references %s should fail", database)
+		}
+	}
+}
+
+func TestBackendCredentialEnvironmentCannotBeDatabaseURLReference(t *testing.T) {
+	cfg, err := Decode(strings.NewReader(validConfigJSON()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Backends = map[string]BackendConfig{
+		"primary": {
+			Type:          AdapterOpenAICompatible,
+			BaseURL:       "http://runtime.example/v1",
+			Model:         "operator-model",
+			CredentialEnv: cfg.Database.URLEnv,
+		},
+	}
+	cfg.Capabilities = map[string]Capability{"instruct": {Backend: "primary"}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "credential_env") {
+		t.Fatalf("database URL credential collision should fail without secret detail: %v", err)
+	}
+}
+
 func TestDecodeRejectsUnknownFields(t *testing.T) {
 	cases := []struct{ name, json, field, value string }{
-		{"top-level", `{"version": 1, "api": {"listen": "127.0.0.1:8010"}, "database": {"url_env": "X"}, "retention": {"payload": "1h", "result": "2h", "metadata": "3h"}, "backends": {"fake": {"type": "fake"}}, "capabilities": {"c": {"backend": "fake"}}, "workloads": {"w": {"priority_class": "normal"}}, "secret": "s3cr3t-top"}`,
+		{"top-level", `{"version": 2, "api": {"listen": "127.0.0.1:8010"}, "database": {"url_env": "X", "provisioner_url_env": "Y", "migration_url_env": "Z"}, "retention": {"payload": "1h", "result": "2h", "metadata": "3h"}, "backends": {"fake": {"type": "fake"}}, "capabilities": {"c": {"backend": "fake"}}, "workloads": {"w": {"priority_class": "normal", "allowed_capabilities": ["c"], "workload_timeout_seconds": 300}}, "secret": "s3cr3t-top"}`,
 			"secret", "s3cr3t-top"},
-		{"api", `{"version": 1, "api": {"listen": "127.0.0.1:8010", "tls": true}, "database": {"url_env": "X"}, "retention": {"payload": "1h", "result": "2h", "metadata": "3h"}, "backends": {"fake": {"type": "fake"}}, "capabilities": {"c": {"backend": "fake"}}, "workloads": {"w": {"priority_class": "normal"}}}`,
+		{"api", `{"version": 2, "api": {"listen": "127.0.0.1:8010", "tls": true}, "database": {"url_env": "X", "provisioner_url_env": "Y", "migration_url_env": "Z"}, "retention": {"payload": "1h", "result": "2h", "metadata": "3h"}, "backends": {"fake": {"type": "fake"}}, "capabilities": {"c": {"backend": "fake"}}, "workloads": {"w": {"priority_class": "normal", "allowed_capabilities": ["c"], "workload_timeout_seconds": 300}}}`,
 			"tls", ""},
-		{"backend", `{"version": 1, "api": {"listen": "127.0.0.1:8010"}, "database": {"url_env": "X"}, "retention": {"payload": "1h", "result": "2h", "metadata": "3h"}, "backends": {"fake": {"type": "fake", "api_key": "s3cr3t-back"}}, "capabilities": {"c": {"backend": "fake"}}, "workloads": {"w": {"priority_class": "normal"}}}`,
+		{"backend", `{"version": 2, "api": {"listen": "127.0.0.1:8010"}, "database": {"url_env": "X", "provisioner_url_env": "Y", "migration_url_env": "Z"}, "retention": {"payload": "1h", "result": "2h", "metadata": "3h"}, "backends": {"fake": {"type": "fake", "api_key": "s3cr3t-back"}}, "capabilities": {"c": {"backend": "fake"}}, "workloads": {"w": {"priority_class": "normal", "allowed_capabilities": ["c"], "workload_timeout_seconds": 300}}}`,
 			"api_key", "s3cr3t-back"},
-		{"workload", `{"version": 1, "api": {"listen": "127.0.0.1:8010"}, "database": {"url_env": "X"}, "retention": {"payload": "1h", "result": "2h", "metadata": "3h"}, "backends": {"fake": {"type": "fake"}}, "capabilities": {"c": {"backend": "fake"}}, "workloads": {"w": {"priority_class": "normal", "model": "x"}}}`,
+		{"workload", `{"version": 2, "api": {"listen": "127.0.0.1:8010"}, "database": {"url_env": "X", "provisioner_url_env": "Y", "migration_url_env": "Z"}, "retention": {"payload": "1h", "result": "2h", "metadata": "3h"}, "backends": {"fake": {"type": "fake"}}, "capabilities": {"c": {"backend": "fake"}}, "workloads": {"w": {"priority_class": "normal", "allowed_capabilities": ["c"], "workload_timeout_seconds": 300, "model": "x"}}}`,
 			"model", ""},
 	}
 	for _, c := range cases {
@@ -79,7 +111,7 @@ func TestDecodeRejectsUnknownFields(t *testing.T) {
 }
 
 func TestDecodeRejectsUnsupportedVersion(t *testing.T) {
-	json := strings.Replace(validConfigJSON(), `"version": 1`, `"version": 2`, 1)
+	json := strings.Replace(validConfigJSON(), `"version": 2`, `"version": 1`, 1)
 	if _, err := Decode(strings.NewReader(json)); err == nil {
 		t.Error("version 2 should fail")
 	}
@@ -92,9 +124,41 @@ func TestDecodeRejectsTrailingContent(t *testing.T) {
 }
 
 func TestDecodeRejectsDuplicateFields(t *testing.T) {
-	json := `{"version": 1, "version": 2}`
+	json := `{"version": 2, "version": 1}`
 	if _, err := Decode(strings.NewReader(json)); err == nil {
 		t.Error("duplicate fields should fail")
+	}
+}
+
+func TestWorkloadV2RequiredFieldsAndTimeout(t *testing.T) {
+	for _, replacement := range []string{
+		`"allowed_capabilities": ["instruct"]`,
+		`"workload_timeout_seconds": 300`,
+		`"workload_timeout_seconds": null`,
+		`"workload_timeout_seconds": 0`,
+		`"workload_timeout_seconds": 3601`,
+	} {
+		json := strings.Replace(validConfigJSON(), `"allowed_capabilities": ["instruct"], "workload_timeout_seconds": 300`, replacement, 1)
+		if _, err := Decode(strings.NewReader(json)); err == nil {
+			t.Errorf("replacement %s should fail", replacement)
+		}
+	}
+	for _, timeout := range []string{"1", "3600"} {
+		json := strings.Replace(validConfigJSON(), `"workload_timeout_seconds": 300`, `"workload_timeout_seconds": `+timeout, 1)
+		if _, err := Decode(strings.NewReader(json)); err != nil {
+			t.Errorf("timeout %s should pass: %v", timeout, err)
+		}
+	}
+}
+
+func TestAllowedCapabilitiesEmptyMeansDenyAll(t *testing.T) {
+	json := strings.Replace(validConfigJSON(), `"allowed_capabilities": ["instruct"]`, `"allowed_capabilities": []`, 1)
+	cfg, err := Decode(strings.NewReader(json))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Workloads["default"].AllowedCapabilities) != 0 {
+		t.Fatal("empty capability allowlist was not preserved")
 	}
 }
 
@@ -122,11 +186,20 @@ func TestBackendURLRejection(t *testing.T) {
 	}
 }
 
+func TestBackendURLParseErrorsDoNotEchoSecrets(t *testing.T) {
+	const secret = "backend-secret-value"
+	if err := validateBackendURL("http://%zz:" + secret + "@host/v1"); err == nil {
+		t.Fatal("malformed URL unexpectedly accepted")
+	} else if strings.Contains(err.Error(), secret) {
+		t.Fatalf("URL validation echoed credential material: %v", err)
+	}
+}
+
 func TestCapabilityMustResolve(t *testing.T) {
 	json := `{
 		"version": 1,
 		"api": {"listen": "127.0.0.1:8010"},
-		"database": {"url_env": "LLM_BROKER_DATABASE_URL"},
+		"database": {"url_env": "LLM_BROKER_DATABASE_URL", "provisioner_url_env": "LLM_BROKER_PROVISIONER_DATABASE_URL", "migration_url_env": "LLM_BROKER_MIGRATION_DATABASE_URL"},
 		"retention": {"payload": "1h", "result": "2h", "metadata": "3h"},
 		"backends": {"fake": {"type": "fake"}},
 		"capabilities": {"instruct": {"backend": "missing"}},
@@ -142,7 +215,7 @@ func TestWorkloadPolicyValidation(t *testing.T) {
 		m := map[string]interface{}{
 			"version":   1,
 			"api":       map[string]interface{}{"listen": "127.0.0.1:8010"},
-			"database":  map[string]interface{}{"url_env": "LLM_BROKER_DATABASE_URL"},
+			"database":  map[string]interface{}{"url_env": "LLM_BROKER_DATABASE_URL", "provisioner_url_env": "LLM_BROKER_PROVISIONER_DATABASE_URL", "migration_url_env": "LLM_BROKER_MIGRATION_DATABASE_URL"},
 			"retention": map[string]interface{}{"payload": "1h", "result": "2h", "metadata": "3h"},
 			"backends":  map[string]interface{}{"fake": map[string]interface{}{"type": "fake"}},
 			"capabilities": map[string]interface{}{
@@ -198,7 +271,7 @@ func TestOpenAICompatibleValidation(t *testing.T) {
 	json := `{
 		"version": 1,
 		"api": {"listen": "127.0.0.1:8010"},
-		"database": {"url_env": "LLM_BROKER_DATABASE_URL"},
+		"database": {"url_env": "LLM_BROKER_DATABASE_URL", "provisioner_url_env": "LLM_BROKER_PROVISIONER_DATABASE_URL", "migration_url_env": "LLM_BROKER_MIGRATION_DATABASE_URL"},
 		"retention": {"payload": "1h", "result": "2h", "metadata": "3h"},
 		"backends": {"primary": {"type": "openai_compatible", "base_url": "http://llm-runtime.example:8080/v1", "model": "alias"}},
 		"capabilities": {"instruct": {"backend": "primary"}},

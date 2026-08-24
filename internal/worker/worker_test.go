@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,40 @@ import (
 )
 
 var textResponse = domain.ResponseContract{Kind: domain.ResponseText}
+
+type countingAdapter struct {
+	calls atomic.Int32
+}
+
+func (a *countingAdapter) Type() string { return "counting" }
+
+func (a *countingAdapter) Infer(context.Context, *backend.Request) (*backend.Response, error) {
+	a.calls.Add(1)
+	return &backend.Response{
+		Content:      "unexpected inference",
+		FinishReason: domain.FinishStop,
+		Usage:        domain.Usage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2},
+	}, nil
+}
+
+type boundaryAdapter struct {
+	calls      atomic.Int32
+	beforeCall func()
+}
+
+func (a *boundaryAdapter) Type() string { return "boundary-spy" }
+
+func (a *boundaryAdapter) Infer(context.Context, *backend.Request) (*backend.Response, error) {
+	if a.beforeCall != nil {
+		a.beforeCall()
+	}
+	a.calls.Add(1)
+	return &backend.Response{
+		Content:      "boundary response",
+		FinishReason: domain.FinishStop,
+		Usage:        domain.Usage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2},
+	}, nil
+}
 
 func newTask(t *testing.T, maxAttempts int, retryDelays []int) (postgres.Client, postgres.WorkloadPolicy, uuid.UUID) {
 	t.Helper()
@@ -377,5 +412,218 @@ func TestDecodePayloadRejectsInvalid(t *testing.T) {
 	}
 	if _, err := decodePayload([]byte(`not json`)); err == nil {
 		t.Error("invalid JSON accepted")
+	}
+}
+
+func TestOperationalPreflightStopsUnmanagedLocalWorkload(t *testing.T) {
+	_, workload, taskID := newTask(t, 3, nil)
+	delete(testConfiguredWorkloads, workload.Name)
+
+	spy := &countingAdapter{}
+	w, leader, _ := newWorkerEnv(t, "none", 0)
+	w.registry = backend.NewRegistry()
+	w.registry.Register("fake", func(config.BackendConfig) (backend.Adapter, error) {
+		return spy, nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- w.Run(ctx) }()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	var operationalErr error
+	select {
+	case <-deadline.C:
+		t.Fatal("worker did not enter operational fail-closed state")
+	case <-ticker.C:
+		operationalErr = w.OperationalFailure()
+		if operationalErr == nil {
+			for operationalErr == nil {
+				select {
+				case <-deadline.C:
+					t.Fatal("worker did not enter operational fail-closed state")
+				case <-ticker.C:
+					operationalErr = w.OperationalFailure()
+				}
+			}
+		}
+	}
+	if operationalErr == nil {
+		t.Fatal("worker did not record operational failure")
+	}
+	if leader.Held() {
+		t.Fatal("worker retained execution leadership after operational failure")
+	}
+
+	task, err := rtStore.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.State != domain.TaskRunning {
+		t.Fatalf("unmanaged task state = %s, want running claimed recovery", task.State)
+	}
+	attempt, err := rtStore.GetLastAttempt(context.Background(), taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempt.State != postgres.AttemptPhaseClaimed {
+		t.Fatalf("unmanaged attempt state = %s, want claimed", attempt.State)
+	}
+	if spy.calls.Load() != 0 {
+		t.Fatalf("unmanaged workload invoked adapter %d times", spy.calls.Load())
+	}
+	blocked, err := rtStore.HasUnresolvedIndeterminate(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked {
+		t.Fatal("safe claimed preflight failure incorrectly blocked indeterminate recovery")
+	}
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("worker shutdown after operational failure: %v", err)
+	}
+}
+
+func TestH00WorkerPreflightRevocationCallsNoAdapter(t *testing.T) {
+	client, policy, taskID := newTask(t, 3, nil)
+	claimed, err := rtStore.ClaimNextQueued(context.Background(), uuid.New(), time.Minute)
+	if err != nil {
+		t.Fatalf("claim revoked task: %v", err)
+	}
+	if claimed.ID != taskID {
+		t.Fatalf("claimed task = %s, want %s", claimed.ID, taskID)
+	}
+	if err := adminStore.RevokeWorkloadBySlug(context.Background(), client.ID, policy.Name); err != nil {
+		t.Fatalf("revoke workload before worker preflight: %v", err)
+	}
+
+	spy := &countingAdapter{}
+	w, _, _ := newWorkerEnv(t, "none", 0)
+	w.registry = backend.NewRegistry()
+	w.registry.Register("fake", func(config.BackendConfig) (backend.Adapter, error) {
+		return spy, nil
+	})
+	if err := w.execute(context.Background(), claimed); err != nil {
+		t.Fatalf("revoked worker execute: %v", err)
+	}
+	if got := spy.calls.Load(); got != 0 {
+		t.Fatalf("revoked worker invoked adapter %d times, want 0", got)
+	}
+	task, err := rtStore.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("read revoked task: %v", err)
+	}
+	if task.State != domain.TaskFailed {
+		t.Fatalf("revoked task state = %s, want failed", task.State)
+	}
+	attempt, err := rtStore.GetLastAttempt(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("read revoked attempt: %v", err)
+	}
+	if attempt.State != postgres.AttemptPhaseFailed || attempt.ErrorClass == nil ||
+		*attempt.ErrorClass != string(domain.ErrorPolicyRejected) || attempt.ErrorCode == nil ||
+		*attempt.ErrorCode != "authorization_revoked" {
+		t.Fatalf("revoked attempt = %+v, want policy_rejected/authorization_revoked", attempt)
+	}
+	if _, err := rtStore.GetResultByTaskID(context.Background(), taskID); !errors.Is(err, postgres.ErrNotFound) {
+		t.Fatalf("revoked task has a result: %v", err)
+	}
+}
+
+func TestH00WorkerPreflightTopologyFailureCallsNoAdapter(t *testing.T) {
+	_, workload, taskID := newTask(t, 3, nil)
+	claimed, err := rtStore.ClaimNextQueued(context.Background(), uuid.New(), time.Minute)
+	if err != nil {
+		t.Fatalf("claim topology-failure task: %v", err)
+	}
+	if claimed.ID != taskID {
+		t.Fatalf("claimed task = %s, want %s", claimed.ID, taskID)
+	}
+
+	spy := &countingAdapter{}
+	w, _, _ := newWorkerEnv(t, "none", 0)
+	configured := make(map[string][32]byte, len(testConfiguredWorkloads))
+	for slug, digest := range testConfiguredWorkloads {
+		configured[slug] = digest
+	}
+	wrong := configured[workload.Name]
+	wrong[0]++
+	configured[workload.Name] = wrong
+	w.configuredWorkloads = configured
+	w.registry = backend.NewRegistry()
+	w.registry.Register("fake", func(config.BackendConfig) (backend.Adapter, error) {
+		return spy, nil
+	})
+	if err := w.execute(context.Background(), claimed); !errors.Is(err, postgres.ErrPreflightOperational) {
+		t.Fatalf("topology-failure worker execute = %v, want operational preflight failure", err)
+	}
+	if got := spy.calls.Load(); got != 0 {
+		t.Fatalf("topology-failure worker invoked adapter %d times, want 0", got)
+	}
+	task, err := rtStore.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("read topology-failure task: %v", err)
+	}
+	if task.State != domain.TaskRunning {
+		t.Fatalf("topology-failure task state = %s, want running", task.State)
+	}
+	attempt, err := rtStore.GetLastAttempt(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("read topology-failure attempt: %v", err)
+	}
+	if attempt.State != postgres.AttemptPhaseClaimed {
+		t.Fatalf("topology-failure attempt state = %s, want claimed", attempt.State)
+	}
+	if attempt.ErrorClass != nil || attempt.ErrorCode != nil {
+		t.Fatalf("topology-failure attempt was terminalized: %+v", attempt)
+	}
+}
+
+func TestH00WorkerAdapterRunsOnlyAfterAuthorizedCommit(t *testing.T) {
+	_, _, taskID := newTask(t, 3, nil)
+	claimed, err := rtStore.ClaimNextQueued(context.Background(), uuid.New(), time.Minute)
+	if err != nil {
+		t.Fatalf("claim authorized-boundary task: %v", err)
+	}
+	if claimed.ID != taskID {
+		t.Fatalf("claimed task = %s, want %s", claimed.ID, taskID)
+	}
+
+	var factoryState, inferState string
+	spy := &boundaryAdapter{beforeCall: func() {
+		attempt, err := rtStore.GetLastAttempt(context.Background(), taskID)
+		if err != nil {
+			t.Fatalf("read attempt at adapter invocation: %v", err)
+		}
+		inferState = attempt.State
+	}}
+	w, _, _ := newWorkerEnv(t, "none", 0)
+	w.registry = backend.NewRegistry()
+	w.registry.Register("fake", func(config.BackendConfig) (backend.Adapter, error) {
+		attempt, err := rtStore.GetLastAttempt(context.Background(), taskID)
+		if err != nil {
+			t.Fatalf("read attempt at adapter construction: %v", err)
+		}
+		factoryState = attempt.State
+		return spy, nil
+	})
+	if err := w.execute(context.Background(), claimed); err != nil {
+		t.Fatalf("authorized-boundary worker execute: %v", err)
+	}
+	if factoryState != postgres.AttemptPhaseAuthorized || inferState != postgres.AttemptPhaseAuthorized {
+		t.Fatalf("adapter boundary states: factory=%q infer=%q, want authorized/authorized", factoryState, inferState)
+	}
+	if got := spy.calls.Load(); got != 1 {
+		t.Fatalf("authorized worker adapter calls = %d, want 1", got)
+	}
+	finalTask, err := rtStore.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("read authorized-boundary task: %v", err)
+	}
+	if finalTask.State != domain.TaskSucceeded {
+		t.Fatalf("authorized-boundary task state = %s, want succeeded", finalTask.State)
 	}
 }

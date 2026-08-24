@@ -1,13 +1,14 @@
 [Unit]
 Description=LLM Broker Worker
 Documentation=https://github.com/JM-SE/llm-broker
-After=network-online.target postgresql.service llm-broker-api.service
+After=network-online.target postgresql.service
+Before=llm-broker-api.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=llm-broker
-Group=llm-broker
+User=llm-broker-worker
+Group=llm-broker-worker
 EnvironmentFile=/etc/llm-broker/worker.env
 ExecStart=/usr/local/bin/llm-broker worker
 Restart=on-failure

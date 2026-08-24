@@ -12,7 +12,7 @@ import (
 	"github.com/JM-SE/llm-broker/internal/config"
 	"github.com/JM-SE/llm-broker/internal/domain"
 	"github.com/JM-SE/llm-broker/internal/scheduler"
-	"github.com/JM-SE/llm-broker/internal/store/postgres"
+	"github.com/JM-SE/llm-broker/internal/testsupport"
 )
 
 // enqueueCap is mustEnqueue with a configurable capability.
@@ -22,18 +22,19 @@ func enqueueCap(t *testing.T, clientID, workloadID int64, key, capability string
 	for i := range hash {
 		hash[i] = 0xAB
 	}
-	res, err := rtStore.CreateTask(context.Background(), postgres.CreateTaskParams{
-		ClientID:       clientID,
-		WorkloadID:     workloadID,
-		Capability:     capability,
-		IdempotencyKey: key,
-		RequestHash:    hash,
-		Payload:        payload,
-	})
+	var taskID uuid.UUID
+	err := adminDB.QueryRowContext(context.Background(), `
+		INSERT INTO tasks (client_id, workload_id, capability, idempotency_key, request_hash)
+		VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+		clientID, workloadID, capability, key, hash).Scan(&taskID)
 	if err != nil {
 		t.Fatalf("enqueue task: %v", err)
 	}
-	return res.TaskID
+	if _, err := adminDB.ExecContext(context.Background(),
+		`INSERT INTO task_payloads (task_id, payload) VALUES ($1,$2)`, taskID, string(payload)); err != nil {
+		t.Fatalf("insert task payload: %v", err)
+	}
+	return taskID
 }
 
 // TestLoadOneActiveInference runs a burst through one fake backend and
@@ -78,34 +79,37 @@ func TestBackendUnreachableRetriesThenFails(t *testing.T) {
 
 	policy := scheduler.DefaultPolicy()
 	policy.HeartbeatInterval = 100 * time.Millisecond
+	client := mustClient(t)
+	capabilities := map[string]config.Capability{
+		"instruct": {Backend: "unreachable"},
+		"quick":    {Backend: "fake"},
+	}
+	backends := map[string]config.BackendConfig{
+		"unreachable": {
+			Type:          config.AdapterOpenAICompatible,
+			BaseURL:       "http://127.0.0.1:1/v1",
+			Model:         "operator-model-alias",
+			CredentialEnv: "LLM_BROKER_TEST_BACKEND_KEY",
+		},
+		"fake": {Type: config.AdapterFake, FailMode: config.FakeFailNone},
+	}
+	topologyDigest := (&config.Config{Version: 2, Capabilities: capabilities, Backends: backends}).TopologyDigest()
+	pol := mustPolicyWithDigest(t, "unreach-pol", 2, []int{1}, topologyDigest)
+	mustGrant(t, client.ID, pol.ID)
 	leader := scheduler.NewLeader(rtStore, uuid.New(), policy.HeartbeatInterval, nil)
 	sched := scheduler.New(rtStore, policy, leader)
 	w := New(Options{
-		Store:     rtStore,
-		Scheduler: sched,
-		Leader:    leader,
-		Registry:  backend.DefaultRegistry,
-		Capabilities: map[string]config.Capability{
-			"instruct": {Backend: "unreachable"},
-			"quick":    {Backend: "fake"},
-		},
-		Backends: map[string]config.BackendConfig{
-			"unreachable": {
-				Type:          config.AdapterOpenAICompatible,
-				BaseURL:       "http://127.0.0.1:1/v1",
-				Model:         "operator-model-alias",
-				CredentialEnv: "LLM_BROKER_TEST_BACKEND_KEY",
-			},
-			"fake": {Type: config.AdapterFake, FailMode: config.FakeFailNone},
-		},
-		Policy:    policy,
-		ClaimPoll: 50 * time.Millisecond,
+		Store:               rtStore,
+		Scheduler:           sched,
+		Leader:              leader,
+		Registry:            backend.DefaultRegistry,
+		Capabilities:        capabilities,
+		Backends:            backends,
+		ConfiguredWorkloads: testConfiguredWorkloads,
+		Policy:              policy,
+		ClaimPoll:           50 * time.Millisecond,
 	})
 	startWorker(t, w)
-
-	client := mustClient(t)
-	pol := mustPolicy(t, "unreach-pol", 2, []int{1})
-	mustGrant(t, client.ID, pol.ID)
 
 	taskID := enqueueCap(t, client.ID, pol.ID, uniqueName("taskkey"), "instruct",
 		payloadFor(t, pol.Name, "instruct",
@@ -128,7 +132,12 @@ func TestBackendUnreachableRetriesThenFails(t *testing.T) {
 	}
 
 	// The worker survived: a healthy-capability task completes.
-	okPol := mustPolicy(t, "ok-pol", 1, nil)
+	okPol := mustPolicyWithDigest(t, "ok-pol", 1, nil, topologyDigest)
+	okPol.AllowedCapabilities = []string{"quick"}
+	if okPol, err = testsupport.ApplyPolicy(context.Background(), adminStore, okPol); err != nil {
+		t.Fatalf("update healthy policy capabilities: %v", err)
+	}
+	testConfiguredWorkloads[okPol.Name] = topologyDigest
 	mustGrant(t, client.ID, okPol.ID)
 	okID := enqueueCap(t, client.ID, okPol.ID, uniqueName("taskkey"), "quick",
 		payloadFor(t, okPol.Name, "quick",

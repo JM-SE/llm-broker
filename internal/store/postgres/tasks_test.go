@@ -50,7 +50,7 @@ func TestCreateTaskAndIdempotentReplay(t *testing.T) {
 func TestCreateTaskConflictOnDifferentRequest(t *testing.T) {
 	client, policy := setupTaskEnv(t)
 	mustCreateTask(t, adminStore, client.ID, policy.ID, "conflict-key-001", testHash(1))
-	_, err := adminStore.CreateTask(context.Background(), CreateTaskParams{
+	_, err := adminStore.createTaskFixture(context.Background(), CreateTaskParams{
 		ClientID:       client.ID,
 		WorkloadID:     policy.ID,
 		Capability:     "instruct",
@@ -73,7 +73,7 @@ func TestCreateTaskConcurrentIdentical(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			results[i], errs[i] = adminStore.CreateTask(context.Background(), CreateTaskParams{
+			results[i], errs[i] = adminStore.createTaskFixture(context.Background(), CreateTaskParams{
 				ClientID:       client.ID,
 				WorkloadID:     policy.ID,
 				Capability:     "instruct",
@@ -123,7 +123,7 @@ func TestCreateTaskConcurrentConflicts(t *testing.T) {
 			} else {
 				hash = testHash(1)
 			}
-			res, err := adminStore.CreateTask(context.Background(), CreateTaskParams{
+			res, err := adminStore.createTaskFixture(context.Background(), CreateTaskParams{
 				ClientID:       client.ID,
 				WorkloadID:     policy.ID,
 				Capability:     "instruct",

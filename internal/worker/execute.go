@@ -17,10 +17,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// execute runs one claimed task end to end: policy lookup, adapter
-// resolution, cancel checks, the adapter call with a workload deadline and
-// lease renewal, output validation, and the terminal transaction. It never
-// runs two calls concurrently: the loop is strictly serial.
+// execute runs one claimed task end to end: payload decoding, cancellation,
+// the durable authorization boundary, adapter resolution, the adapter call
+// with a workload deadline and lease renewal, output validation, and the
+// terminal transaction. It never runs two calls concurrently: the loop is
+// strictly serial.
 func (w *Worker) execute(ctx context.Context, tw postgres.TaskWithPayload) error {
 	log := w.log.With("task_id", tw.ID)
 	attempt := tw.Attempts
@@ -29,32 +30,63 @@ func (w *Worker) execute(ctx context.Context, tw postgres.TaskWithPayload) error
 	// process receives SIGTERM mid-call.
 	execCtx := context.WithoutCancel(ctx)
 
-	policy, err := w.store.GetWorkloadPolicyByID(execCtx, tw.WorkloadID)
-	if err != nil {
-		return fmt.Errorf("load workload policy: %w", err)
-	}
-
-	adapter, err := w.adapterFor(tw.Capability, policy)
-	if err != nil {
-		// Configuration error: fail the worker, not the task. The process
-		// exits and the operator fixes the configuration.
-		return fmt.Errorf("resolve adapter: %w", err)
-	}
-
 	sub, err := decodePayload(tw.Payload)
 	if err != nil {
 		log.Error("task payload is corrupt; marking failed", "error", err)
-		_, err = w.store.FinishTaskFailed(execCtx, tw.ID, attempt, string(domain.ErrorInternal), "invalid_payload")
+		_, finishErr := w.store.FinishTaskFailed(execCtx, tw.ID, attempt, string(domain.ErrorInternal), "invalid_payload")
 		w.metrics.IncInference(string(domain.ErrorInternal))
+		if finishErr != nil {
+			return finishErr
+		}
 		return err
 	}
 
-	// Cancellation observed before the adapter call: no inference happens.
-	if tw.CancelRequestedAt != nil {
+	// Refresh cancellation after the claim. A queued task may be revoked or
+	// cancelled while it waits for the worker; cancellation is handled before
+	// authorization because it never needs an adapter call.
+	cur, err := w.store.GetTask(execCtx, tw.ID)
+	if err != nil {
+		return fmt.Errorf("%w: refresh task state", postgres.ErrPreflightOperational)
+	}
+	if cur.CancelRequestedAt != nil || tw.CancelRequestedAt != nil {
 		log.Info("cancelling before inference (cancel requested while queued or claimed)")
 		_, err := w.store.FinishTaskCancelled(execCtx, tw.ID, attempt)
 		w.metrics.IncInference(metrics.ClassCancelled)
 		return err
+	}
+
+	localDigest, localMembership := w.configuredWorkloads[tw.WorkloadSlug]
+	_, configuredCapability := w.capabilities[tw.Capability]
+	policy, err := w.store.PreflightTask(execCtx, postgres.PreflightParams{
+		TaskID:               tw.ID,
+		Attempt:              attempt,
+		ClientID:             tw.ClientID,
+		WorkloadID:           tw.WorkloadID,
+		WorkloadSlug:         tw.WorkloadSlug,
+		Capability:           tw.Capability,
+		LocalMembership:      localMembership,
+		ConfiguredCapability: configuredCapability,
+		LocalTopologyDigest:  localDigest,
+	})
+	if err != nil {
+		if errors.Is(err, postgres.ErrPreflightPolicyRejected) {
+			log.Info("authorization revoked before inference")
+			w.metrics.IncInference(string(domain.ErrorPolicyRejected))
+			return nil
+		}
+		if errors.Is(err, postgres.ErrPreflightOperational) {
+			return err
+		}
+		return fmt.Errorf("preflight authorization: %w", err)
+	}
+
+	// The preflight transaction has committed authorized before adapter
+	// selection. Any configuration failure after this point remains visible as
+	// an authorized/ambiguous recovery item rather than being terminalized as a
+	// policy denial.
+	adapter, err := w.adapterFor(tw.Capability, policy)
+	if err != nil {
+		return fmt.Errorf("%w: resolve adapter", postgres.ErrPreflightOperational)
 	}
 
 	timeout := time.Duration(policy.WorkloadTimeoutSeconds) * time.Second
@@ -91,7 +123,7 @@ func (w *Worker) execute(ctx context.Context, tw postgres.TaskWithPayload) error
 	// Success path: a cancellation requested while the call was running
 	// discards the output and cancels the task. The refresh runs on the
 	// call context so a worker shutdown does not interrupt persistence.
-	cur, err := w.store.GetTask(callCtx, tw.ID)
+	cur, err = w.store.GetTask(callCtx, tw.ID)
 	if err != nil {
 		return fmt.Errorf("refresh task state: %w", err)
 	}

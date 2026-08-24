@@ -2,12 +2,10 @@
 
 ## Current Gate
 
-- Current phase: P09, Packaging and Release Candidate.
-- State: `ready_for_review`.
-- Previous phases: P00 through P08 accepted.
-- Git policy: no automatic commits; P07 was committed by the assistant on
-  explicit user request, otherwise changes are left for manual review and
-  user commits.
+- Current phase: product track complete (P00-P09 accepted).
+- State: product v1 accepted; integration track available.
+- Next optional phase: L00 (sanitized llama-swap/Qwen profile), only when the operator starts the integration track.
+- Git policy: commits are operator-controlled unless explicitly delegated for a phase.
 
 ## Product Track
 
@@ -22,13 +20,13 @@
 | P06 | `accepted` | approved |
 | P07 | `accepted` | approved |
 | P08 | `accepted` | approved (P08 gate waived per user instruction) |
-| P09 | `ready_for_review` | P08 accepted |
+| P09 | `accepted` | approved |
 
 ## Integration Track
 
 | Phase | State | Approval |
 | --- | --- | --- |
-| L00 | `blocked` | requires accepted P09 |
+| L00 | `pending` | unblocked by accepted P09 |
 | L01 | `blocked` | requires L00 |
 | L02 | `blocked` | requires L01 and maintenance approval |
 | L03 | `blocked` | requires L02 and cutover approval |
@@ -49,31 +47,15 @@
   integration phases.
 - Made product completion independent from all integration phases.
 
-## P00 Runtime Record
-
-- No Go source or dependency was created.
-- No database/container/service was created or modified.
-- No systemd unit, runtime, listener, model, or client was changed.
-- No inference/network request was made.
-- No Git commit, tag, remote, or staging action was performed.
-
 ## Validation Evidence
 
-- Documentation set: 18 files and 2424 lines at validation.
-- Phase set: exactly P00-P09 and L00-L04; all 15 index references resolve.
-- Structure: every phase has status, objective, prerequisite/precondition, scope,
-  exclusions, deliverables, procedure, automated/manual acceptance, stop
-  conditions, and handoff.
-- State: one phase is `ready_for_review`; fourteen phases are `pending` and
-  blocked by the index gates.
-- Sanitization: no personal home path, known live port, concrete local model
-  filename, local container/database identity, or credential was found.
-- Product isolation: product phase specs contain no llama-swap, Qwen, YTPipe,
-  personal path, or concrete listener reference.
-- Formatting: ASCII-only; no trailing whitespace; `git diff --check` and cached
-  equivalent pass.
-- Repository: only `.git/` and `specs/`; branch `main`; no commits or staging;
-  `specs/` remains untracked for review.
+- Product phases P00-P09 implemented and accepted.
+- Automated suite: `go test -race -p 1 ./...` across product packages.
+- Packaging smoke: Docker Compose fake-mode end-to-end (migrate, seed, client
+  create/grant, POST Prefer wait, ready/metrics).
+- Release artifacts: linux amd64/arm64 tarballs + SHA256SUMS generated locally.
+- Product acceptance does not require YTPipe, llama-swap, or any named local
+  model/runtime.
 
 ## Approval Log
 
@@ -94,9 +76,10 @@
   backoff, cancel semantics, ambiguous recovery CLI).
 - Product P08: accepted (bounded metrics, sanitized event logging,
   retention job, threat model, restore rehearsal).
-- Product P09: ready for review (packaging and release candidate, Docker,
-  compose fake-mode, systemd examples, release artifacts).
+- Product P09: accepted (packaging and release candidate, Docker, compose
+  fake-mode, systemd examples, release artifacts).
+- Product track complete. Integration track optional and independent.
 
-## Suggested Commit Message
+## Suggested Next Commit Message
 
-`feat: P09 packaging and release candidate (Docker/compose fake-mode, systemd examples, release artifacts and checksums, docs)`
+`docs: accept P09 and close product track P00-P09`

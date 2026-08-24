@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,35 +11,41 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
 	"github.com/JM-SE/llm-broker/internal/auth"
 	"github.com/JM-SE/llm-broker/internal/config"
 	"github.com/JM-SE/llm-broker/internal/store/postgres"
+	"github.com/JM-SE/llm-broker/internal/testsupport"
 	"github.com/JM-SE/llm-broker/migrations"
 )
 
 // Integration tests require the disposable PostgreSQL from
-// scripts/pg-test-up.sh (TEST_DATABASE_URL + TEST_DATABASE_RUNTIME_URL).
+// scripts/pg-test-up.sh (TEST_DATABASE_URL + TEST_DATABASE_PROVISIONER_URL +
+// TEST_DATABASE_RUNTIME_URL).
 var (
-	adminStore *postgres.Store // migration/owner role: fixtures
-	rtStore    *postgres.Store // least-privilege runtime role: server under test
+	adminStore    *postgres.Store // migration/owner role: fixtures
+	adminDB       *sql.DB
+	rtStore       *postgres.Store // least-privilege runtime role: server under test
+	testWorkloads = map[string]config.WorkloadPolicy{}
 )
 
 func TestMain(m *testing.M) {
 	adminURL := os.Getenv("TEST_DATABASE_URL")
+	provisionerURL := os.Getenv("TEST_DATABASE_PROVISIONER_URL")
 	runtimeURL := os.Getenv("TEST_DATABASE_RUNTIME_URL")
-	if adminURL == "" || runtimeURL == "" {
-		fmt.Println("api integration tests skipped: set TEST_DATABASE_URL and TEST_DATABASE_RUNTIME_URL (see scripts/pg-test-up.sh)")
+	if adminURL == "" || provisionerURL == "" || runtimeURL == "" {
+		if os.Getenv("LLM_BROKER_REQUIRE_TEST_DATABASE") == "1" {
+			fmt.Println("api integration tests require TEST_DATABASE_URL, TEST_DATABASE_PROVISIONER_URL, and TEST_DATABASE_RUNTIME_URL")
+			os.Exit(1)
+		}
+		fmt.Println("api integration tests skipped: set TEST_DATABASE_URL, TEST_DATABASE_PROVISIONER_URL, and TEST_DATABASE_RUNTIME_URL (see scripts/pg-test-up.sh)")
 		os.Exit(0)
 	}
 
@@ -53,12 +60,16 @@ func TestMain(m *testing.M) {
 	}
 	defer adminStore.Close()
 
-	if _, err := adminStore.Pool().Exec(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
+	adminDB, err = testsupport.OpenDatabase(adminURL)
+	if err != nil {
+		fmt.Printf("integration setup: admin SQL bridge: %v\n", err)
+		os.Exit(1)
+	}
+	if _, err := adminDB.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
 		fmt.Printf("integration setup: reset schema: %v\n", err)
 		os.Exit(1)
 	}
-	std := stdlib.OpenDBFromPool(adminStore.Pool())
-	provider, err := goose.NewProvider(goose.DialectPostgres, std, migrations.FS)
+	provider, err := goose.NewProvider(goose.DialectPostgres, adminDB, migrations.FS)
 	if err != nil {
 		fmt.Printf("integration setup: migration provider: %v\n", err)
 		os.Exit(1)
@@ -68,42 +79,13 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	_ = provider.Close()
-
-	user, password, err := credentialsFromURL(runtimeURL)
+	// Goose closes the database handle passed to the provider. Reopen the
+	// owner bridge for fixture-only DDL/DML after migrations complete.
+	adminDB, err = testsupport.OpenDatabase(adminURL)
 	if err != nil {
-		fmt.Printf("integration setup: runtime URL: %v\n", err)
+		fmt.Printf("integration setup: reopen admin SQL bridge: %v\n", err)
 		os.Exit(1)
 	}
-	roleIdent := pgx.Identifier{user}.Sanitize()
-	var exists bool
-	if err := adminStore.Pool().QueryRow(ctx,
-		"SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = $1)", user).Scan(&exists); err != nil {
-		fmt.Printf("integration setup: check role: %v\n", err)
-		os.Exit(1)
-	}
-	if !exists {
-		if _, err := adminStore.Pool().Exec(ctx,
-			fmt.Sprintf("CREATE ROLE %s LOGIN PASSWORD '%s'", roleIdent, password)); err != nil {
-			fmt.Printf("integration setup: create runtime role: %v\n", err)
-			os.Exit(1)
-		}
-	}
-	if _, err := adminStore.Pool().Exec(ctx, fmt.Sprintf(
-		"ALTER ROLE %s PASSWORD '%s'; ALTER ROLE %s SET search_path = public",
-		roleIdent, password, roleIdent)); err != nil {
-		fmt.Printf("integration setup: configure runtime role: %v\n", err)
-		os.Exit(1)
-	}
-	grants := fmt.Sprintf(`
-		GRANT USAGE ON SCHEMA public TO %s;
-		GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %s;
-		GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %s;`,
-		roleIdent, roleIdent, roleIdent)
-	if _, err := adminStore.Pool().Exec(ctx, grants); err != nil {
-		fmt.Printf("integration setup: grant runtime role: %v\n", err)
-		os.Exit(1)
-	}
-	_ = std.Close()
 
 	rtStore, err = postgres.Open(ctx, runtimeURL, opts)
 	if err != nil {
@@ -113,18 +95,6 @@ func TestMain(m *testing.M) {
 	defer rtStore.Close()
 
 	os.Exit(m.Run())
-}
-
-func credentialsFromURL(connURL string) (string, string, error) {
-	u, err := url.Parse(connURL)
-	if err != nil {
-		return "", "", err
-	}
-	if u.User == nil {
-		return "", "", fmt.Errorf("URL has no user info")
-	}
-	password, _ := u.User.Password()
-	return u.User.Username(), password, nil
 }
 
 // --- fixtures --------------------------------------------------------------
@@ -139,12 +109,15 @@ func uniqueName(prefix string) string {
 // Capabilities come from config; workload policies live in the database.
 func testConfig() *config.Config {
 	return &config.Config{
-		Version: 1,
+		Version: 2,
 		API:     config.APIConfig{Listen: "127.0.0.1:0", BodyLimitBytes: 524288},
+		Backends: map[string]config.BackendConfig{
+			"fake": {Type: config.AdapterFake, FailMode: config.FakeFailNone},
+		},
 		Capabilities: map[string]config.Capability{
 			"instruct": {Backend: "fake"},
 		},
-		Workloads: map[string]config.WorkloadPolicy{},
+		Workloads: testWorkloads,
 	}
 }
 
@@ -222,7 +195,8 @@ func clientIDOf(t *testing.T, tok auth.Token) int64 {
 func grantWorkload(t *testing.T, clientID int64, maxActive int) string {
 	t.Helper()
 	name := uniqueName("wl")
-	_, err := adminStore.UpsertWorkloadPolicy(context.Background(), postgres.WorkloadPolicy{
+	digest := testConfig().TopologyDigest()
+	_, err := testsupport.ApplyPolicy(context.Background(), adminStore, postgres.WorkloadPolicy{
 		Name:                     name,
 		PriorityClass:            "normal",
 		MaxActiveTasks:           maxActive,
@@ -235,6 +209,8 @@ func grantWorkload(t *testing.T, clientID int64, maxActive int) string {
 		PayloadRetentionSeconds:  3600,
 		ResultRetentionSeconds:   86400,
 		MetadataRetentionSeconds: 2592000,
+		AllowedCapabilities:      []string{"instruct"},
+		TopologyDigest:           digest[:],
 	})
 	if err != nil {
 		t.Fatalf("upsert policy: %v", err)
@@ -247,8 +223,17 @@ func grantWorkload(t *testing.T, clientID int64, maxActive int) string {
 	if err != nil {
 		t.Fatalf("get policy: %v", err)
 	}
-	if err := adminStore.GrantWorkload(context.Background(), c.ID, pol.ID); err != nil {
+	if err := adminStore.GrantWorkloadBySlug(context.Background(), c.ID, pol.Name); err != nil {
 		t.Fatalf("grant workload: %v", err)
+	}
+	testWorkloads[name] = config.WorkloadPolicy{
+		PriorityClass:          "normal",
+		MaxActiveTasks:         maxActive,
+		MaxAttempts:            3,
+		RetryDelaysSeconds:     []int{1, 5},
+		MaxOutputTokens:        2048,
+		AllowedCapabilities:    []string{"instruct"},
+		WorkloadTimeoutSeconds: 300,
 	}
 	return name
 }

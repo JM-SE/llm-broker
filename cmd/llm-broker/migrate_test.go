@@ -60,13 +60,13 @@ func TestMigrateMissingConfig(t *testing.T) {
 
 func TestMigrateMissingDatabaseURL(t *testing.T) {
 	path := writeTempConfig(t, testValidConfig)
-	t.Setenv("LLM_BROKER_DATABASE_URL", "")
+	t.Setenv("LLM_BROKER_MIGRATION_URL", "")
 	var stdout, stderr bytes.Buffer
 	code := run(context.Background(), []string{"llm-broker", "migrate", "status", path}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
-	if !strings.Contains(stderr.String(), "LLM_BROKER_DATABASE_URL") {
+	if !strings.Contains(stderr.String(), "LLM_BROKER_MIGRATION_URL") {
 		t.Errorf("stderr should name the URL environment variable: %s", stderr.String())
 	}
 }

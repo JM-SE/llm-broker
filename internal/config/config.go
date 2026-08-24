@@ -17,12 +17,14 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"time"
 )
 
 // Version is the only supported configuration version.
-const Version = 1
+const Version = 2
 
 // Adapter types supported by the product. `fake` is the built-in
 // development/test adapter; `openai_compatible` is the only real protocol
@@ -90,7 +92,11 @@ type APIConfig struct {
 // DatabaseConfig references the PostgreSQL connection by environment
 // variable name; the value is never loaded by the config layer.
 type DatabaseConfig struct {
-	URLEnv                string `json:"url_env"`
+	URLEnv string `json:"url_env"`
+	// ProvisionerURLEnv and MigrationURLEnv are separate role credentials.
+	// Their values are never loaded by the configuration package.
+	ProvisionerURLEnv     string `json:"provisioner_url_env,omitempty"`
+	MigrationURLEnv       string `json:"migration_url_env,omitempty"`
 	MaxConnections        int    `json:"max_connections,omitempty"`
 	ConnectTimeoutSeconds int    `json:"connect_timeout_seconds,omitempty"`
 }
@@ -141,13 +147,53 @@ type WorkloadPolicy struct {
 	// MaxOutputTokens caps generated output (hard ceiling MaxOutputTokens).
 	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
 	// AllowedGeneration restricts the generation vocabulary per field,
-	// with optional narrower ranges. Absent map = all fields allowed with
-	// intrinsic bounds.
+	// with optional narrower ranges. Absent map is deny-all by policy.
 	AllowedGeneration map[string]GenerationConstraint `json:"allowed_generation,omitempty"`
 	// RequiredFeatures must be declared by the backend instance.
 	RequiredFeatures []string `json:"required_features,omitempty"`
 	// Retention optionally overrides the global retention within bounds.
 	Retention *RetentionConfig `json:"retention,omitempty"`
+	// AllowedCapabilities is presence-aware. An explicit empty list is
+	// deny-all; omission and null are invalid in configuration v2.
+	AllowedCapabilities []string `json:"allowed_capabilities"`
+	// WorkloadTimeoutSeconds is mandatory and has no configuration default.
+	WorkloadTimeoutSeconds int `json:"workload_timeout_seconds"`
+
+	allowedCapabilitiesSet bool
+	workloadTimeoutSet     bool
+}
+
+// UnmarshalJSON retains required-field presence while preserving the public
+// value fields used by the rest of the broker. The outer decoder performs the
+// same unknown-field policy for every nested object.
+func (w *WorkloadPolicy) UnmarshalJSON(data []byte) error {
+	type plain WorkloadPolicy
+	var decoded plain
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	_, decoded.allowedCapabilitiesSet = fields["allowed_capabilities"]
+	_, decoded.workloadTimeoutSet = fields["workload_timeout_seconds"]
+	if raw, ok := fields["allowed_capabilities"]; !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return fmt.Errorf("allowed_capabilities is required and must be an array (an empty array means deny-all)")
+	}
+	if raw, ok := fields["workload_timeout_seconds"]; !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return fmt.Errorf("workload_timeout_seconds is required and must be an integer")
+	}
+	*w = WorkloadPolicy(decoded)
+	return nil
+}
+
+// RequiredFieldsPresent reports whether the v2 required fields occurred in
+// the source document. It is useful to configuration-only callers and tests.
+func (w WorkloadPolicy) RequiredFieldsPresent() bool {
+	return w.allowedCapabilitiesSet && w.workloadTimeoutSet
 }
 
 // GenerationConstraint narrows one generation field for a workload.

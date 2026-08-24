@@ -13,13 +13,19 @@ The active worker runs a bounded retention sweep every 10 minutes
 from the policy rows, and queued/running payloads are never eligible.
 Aggregate counts are logged and exposed as `llm_broker_retention_purged_total`.
 
-To reduce retention without a code change:
+To change retention without a code change, update the versioned operator
+configuration and project it through the provisioner workflow:
 
-```sql
-UPDATE workload_policies
-SET payload_retention_seconds = 1800  -- 30 minutes
-WHERE name = 'default';
+```bash
+llm-broker policy validate /etc/llm-broker/config.json
+llm-broker policy diff /etc/llm-broker/config.json
+llm-broker policy apply /etc/llm-broker/config.json
+llm-broker policy status /etc/llm-broker/config.json
 ```
+
+Never mutate `workload_policies` or its capability table directly. Direct SQL
+bypasses canonicalization, advisory locks, topology checks, and audit-friendly
+policy reports.
 
 The idempotency fingerprint (key + request hash) survives payload purge, so
 replayed requests keep returning the original task after the payload is
@@ -49,13 +55,22 @@ Real restore procedure:
 
 ## Upgrades
 
-1. Back up the database.
-2. Deploy the new binary.
-3. `llm-broker migrate status` to review pending migrations.
-4. `llm-broker migrate up` (forward-only; destructive migrations document
-   an irreversible boundary and require a restore rehearsal first).
-5. Verify `/ready` and a smoke task against the fake backend before real
-   traffic.
+1. Back up the database and stop every old API/worker.
+2. Install the H00 binary and configuration v2.
+3. For an existing database volume, create the provisioner and runtime roles
+   first with the migration-owner environment and
+   `deploy/compose/bootstrap-roles.sh`. Fresh Compose volumes create these
+   roles automatically through `init-roles.sh`. Do not put passwords in shell
+   arguments or logs.
+4. `llm-broker migrate status` then `llm-broker migrate up` with the migration
+   role (forward-only; no down migration).
+5. Run `policy validate`, `policy diff`, `policy apply`, and `policy status`
+   with the provisioner role. Do not start API/worker before apply succeeds.
+6. Start the worker, then the API, and verify `/ready` plus a disposable fake
+   smoke task before real traffic. Mixed old/new binaries are unsupported.
+
+The former `deploy/compose/seed.sql` hand-seeding procedure is unsupported and
+has been removed. Policy state must be projected through `policy apply`.
 
 ## Rollback
 

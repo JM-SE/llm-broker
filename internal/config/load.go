@@ -39,7 +39,14 @@ func LoadFile(path string) (*Config, error) {
 // cross-validates. Unknown fields, duplicate fields, and trailing data are
 // rejected.
 func Decode(r io.Reader) (*Config, error) {
-	dec := json.NewDecoder(r)
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("read: %w", err)
+	}
+	if err := rejectDuplicateFields(raw); err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var cfg Config
 	if err := dec.Decode(&cfg); err != nil {
@@ -49,7 +56,11 @@ func Decode(r io.Reader) (*Config, error) {
 		}
 		return nil, fmt.Errorf("decode: %w", err)
 	}
-	if dec.More() {
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("decode: unexpected trailing content")
+		}
 		return nil, fmt.Errorf("decode: unexpected trailing content")
 	}
 	applyDefaults(&cfg)
@@ -99,6 +110,62 @@ func applyDefaults(c *Config) {
 		}
 		c.Workloads[name] = w
 	}
+}
+
+// rejectDuplicateFields is intentionally independent from struct decoding:
+// encoding/json otherwise accepts duplicate object keys, which would make a
+// signed/ reviewed configuration different from the one actually applied.
+func rejectDuplicateFields(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := walkJSONValue(dec); err != nil {
+		return fmt.Errorf("decode: %w", err)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return fmt.Errorf("decode: unexpected trailing content")
+	}
+	return nil
+}
+
+func walkJSONValue(dec *json.Decoder) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	switch d := tok.(type) {
+	case json.Delim:
+		switch d {
+		case '{':
+			seen := map[string]struct{}{}
+			for dec.More() {
+				key, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				name, ok := key.(string)
+				if !ok {
+					return fmt.Errorf("object key is not a string")
+				}
+				if _, ok := seen[name]; ok {
+					return fmt.Errorf("duplicate field %q", name)
+				}
+				seen[name] = struct{}{}
+				if err := walkJSONValue(dec); err != nil {
+					return err
+				}
+			}
+			_, err = dec.Token() // object close
+			return err
+		case '[':
+			for dec.More() {
+				if err := walkJSONValue(dec); err != nil {
+					return err
+				}
+			}
+			_, err = dec.Token() // array close
+			return err
+		}
+	}
+	return nil
 }
 
 // Default retention values.

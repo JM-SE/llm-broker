@@ -46,6 +46,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runClient(ctx, args[2:], stdout, stderr)
 	case "config":
 		return runConfig(args[2:], stdout, stderr)
+	case "policy":
+		return runPolicy(ctx, args[2:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n\n", cmd)
 		printUsageTo(stderr)
@@ -69,6 +71,7 @@ commands:
   migrate   manage database migrations
   client    manage API credentials and workload grants
   config    validate or inspect configuration
+  policy    validate, diff, apply, or inspect durable workload policy
   version   print version and build information
 
 config:
@@ -80,7 +83,7 @@ migrate:
   llm-broker migrate status [path]
   llm-broker migrate up [path]
     applies embedded SQL migrations; the database URL is read from the
-    environment variable configured as database.url_env in the config
+    environment variable configured as database.migration_url_env in the config
 
 api:
   llm-broker api
@@ -98,7 +101,14 @@ client:
   llm-broker client disable <name>
   llm-broker client revoke <name>
   llm-broker client grant <name> <workload>
-    manages API credentials and workload grants; prints credentials once
+  llm-broker client ungrant <name> <workload>
+    create/revoke require --credential-file <path>; credentials are written
+    once with mode 0600 and never printed
+
+policy:
+  llm-broker policy validate [path]
+  llm-broker policy diff|apply|status [path]
+    validate is database-free; the other commands require the provisioner role
 
 `)
 }

@@ -3,7 +3,7 @@
 ## Status
 
 - Phase: P09.
-- State: `ready_for_review`.
+- State: `accepted`.
 - Prerequisite: accepted P08.
 - Runtime impact: disposable packaging/Compose environment only.
 
@@ -111,9 +111,10 @@ mode and can target a generic tested OpenAI-compatible endpoint.
   `llm-broker` user uid 10001, version ldflags from build args) and
   `.dockerignore`.
 - `compose.example.yaml` + `deploy/compose/config.json` (fake mode,
-  metrics enabled, loopback host binds, healthchecks, one-shot `migrate`
-  service, restart policies) and `deploy/compose/seed.sql` (workload policy
-  seed matching the compose config).
+  metrics enabled, loopback host binds, healthchecks, one-shot `migrate` and
+  `policy apply` services, role-separated credentials, restart policies) plus
+  `deploy/compose/init-roles.sh` and the existing-volume role bootstrap
+  procedure.
 - `deploy/examples/systemd/`: `llm-broker-api.service`,
   `llm-broker-worker.service` (dedicated user, EnvironmentFile, hardening,
   restart policy) and setup/migration runbook README.
@@ -165,3 +166,9 @@ install` publication — all deferred until explicit approval.
 `feat: P09 packaging and release candidate (Docker/compose fake-mode, systemd examples, release artifacts and checksums, docs)`
 
 Mark product v1 `ready_for_review`; stop for approval before the L-track.
+
+### Acceptance
+
+- Accepted by operator after packaging review.
+- Product track P00-P09 is complete.
+- Integration track L00-L04 is now unblocked and remains optional relative to product acceptance.

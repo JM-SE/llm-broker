@@ -5,11 +5,21 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/JM-SE/llm-broker/internal/config"
 	"github.com/JM-SE/llm-broker/internal/store/postgres"
 )
+
+func configuredWorkloadSlugs(cfg *config.Config) []string {
+	slugs := make([]string, 0, len(cfg.Workloads))
+	for slug := range cfg.Workloads {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+	return slugs
+}
 
 // openStore resolves the configuration from $LLM_BROKER_CONFIG_FILE, reads
 // the database URL from the configured environment variable, and opens the
@@ -35,6 +45,38 @@ func openStore(ctx context.Context, stderr io.Writer) (*config.Config, *postgres
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "llm-broker: database connection: %v\n", err)
+		return nil, nil, false
+	}
+	return cfg, st, true
+}
+
+// openProvisionerStore is deliberately separate from openStore: client and
+// policy mutations must never silently use the runtime credential.
+func openProvisionerStore(ctx context.Context, stderr io.Writer) (*config.Config, *postgres.Store, bool) {
+	path, ok := resolveConfigPath(nil, stderr)
+	if !ok {
+		return nil, nil, false
+	}
+	cfg, err := config.LoadFile(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid configuration: %v\n", err)
+		return nil, nil, false
+	}
+	if cfg.Database.ProvisionerURLEnv == "" {
+		fmt.Fprintln(stderr, "llm-broker: database.provisioner_url_env is not configured")
+		return nil, nil, false
+	}
+	url := os.Getenv(cfg.Database.ProvisionerURLEnv)
+	if url == "" {
+		fmt.Fprintf(stderr, "llm-broker: environment variable %s is not set\n", cfg.Database.ProvisionerURLEnv)
+		return nil, nil, false
+	}
+	st, err := postgres.Open(ctx, url, postgres.Options{
+		MaxConns:       int32(cfg.Database.MaxConnections),
+		ConnectTimeout: time.Duration(cfg.Database.ConnectTimeoutSeconds) * time.Second,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "llm-broker: provisioner database connection: %v\n", err)
 		return nil, nil, false
 	}
 	return cfg, st, true

@@ -84,9 +84,3 @@ func (s *Store) Close() {
 func (s *Store) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
-
-// Pool exposes the underlying pool for tooling that needs a *sql.DB bridge
-// (for example the migration runner).
-func (s *Store) Pool() *pgxpool.Pool {
-	return s.pool
-}

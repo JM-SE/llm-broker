@@ -3,10 +3,15 @@
 set -euo pipefail
 
 NAME="${LLM_BROKER_TEST_PG_NAME:-llm-broker-test-pg}"
+ENV_FILE="${LLM_BROKER_TEST_ENV_FILE:-}"
 
 if docker inspect "$NAME" >/dev/null 2>&1; then
   docker rm -f "$NAME" >/dev/null
   echo "removed disposable test database $NAME"
 else
-  echo "no container named $NAME" >&2
+	echo "no container named $NAME" >&2
+fi
+
+if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
+	rm -f -- "$ENV_FILE"
 fi

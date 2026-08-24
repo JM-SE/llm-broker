@@ -2,6 +2,7 @@ package domain
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 )
 
@@ -61,6 +62,52 @@ func TestGenerationValidateBounds(t *testing.T) {
 		TopK: int64Ptr(100), MinP: float64Ptr(0), Seed: int64Ptr(-5), Stop: []string{"a"}}
 	if err := good.Validate(); err != nil {
 		t.Errorf("valid generation rejected: %v", err)
+	}
+}
+
+func TestGenerationPresenceDistinguishesOmissionEmptyAndNull(t *testing.T) {
+	var omitted Generation
+	if got := omitted.PresentFields(); len(got) != 0 {
+		t.Fatalf("omitted fields = %v, want none", got)
+	}
+
+	var empty Generation
+	if err := json.Unmarshal([]byte(`{"stop":[]}`), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if !empty.FieldPresent("stop") || empty.Stop == nil || len(empty.Stop) != 0 {
+		t.Fatalf("explicit empty stop lost presence: %#v", empty)
+	}
+
+	var null Generation
+	if err := json.Unmarshal([]byte(`{"stop":null,"temperature":null}`), &null); err != nil {
+		t.Fatal(err)
+	}
+	if !null.FieldPresent("stop") || !null.FieldPresent("temperature") {
+		t.Fatalf("explicit null fields lost presence: %v", null.PresentFields())
+	}
+	if null.Stop != nil || null.Temperature != nil {
+		t.Fatalf("explicit null values unexpectedly populated: %#v", null)
+	}
+
+	for _, test := range []struct {
+		name string
+		gen  Generation
+		want string
+	}{
+		{"omitted", omitted, `{}`},
+		{"empty", empty, `{"stop":[]}`},
+		{"null", null, `{"stop":null,"temperature":null}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := test.gen.Canonical()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != test.want {
+				t.Fatalf("canonical = %s, want %s", got, test.want)
+			}
+		})
 	}
 }
 

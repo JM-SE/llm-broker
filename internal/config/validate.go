@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/JM-SE/llm-broker/internal/domain"
+	"github.com/JM-SE/llm-broker/internal/policy"
 )
 
 // Known adapter features declared by backend instances.
@@ -26,7 +27,7 @@ var envNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 // values (the configuration layer never loads them).
 func (c *Config) Validate() error {
 	if c.Version != Version {
-		return fmt.Errorf("unsupported config version %d (supported: %d)", c.Version, Version)
+		return fmt.Errorf("unsupported config version %d (supported: %d); convert configuration to v2, run migration and policy apply during planned downtime, then restart", c.Version, Version)
 	}
 	if err := c.validateAPI(); err != nil {
 		return err
@@ -68,11 +69,37 @@ func (c *Config) validateAPI() error {
 }
 
 func (c *Config) validateDatabase() error {
-	if c.Database.URLEnv == "" {
-		return fmt.Errorf("database.url_env must name the environment variable holding the connection URL")
+	roles := []struct {
+		field string
+		name  string
+	}{
+		{"database.url_env", c.Database.URLEnv},
+		{"database.provisioner_url_env", c.Database.ProvisionerURLEnv},
+		{"database.migration_url_env", c.Database.MigrationURLEnv},
 	}
-	if !envNameRe.MatchString(c.Database.URLEnv) {
-		return fmt.Errorf("database.url_env %q is not a valid environment variable name", c.Database.URLEnv)
+	seen := make(map[string]string, len(roles))
+	for _, role := range roles {
+		if role.name == "" {
+			return fmt.Errorf("%s must name a distinct environment variable for its database role", role.field)
+		}
+		if !envNameRe.MatchString(role.name) {
+			return fmt.Errorf("%s %q is not a valid environment variable name", role.field, role.name)
+		}
+		if previous, ok := seen[role.name]; ok {
+			return fmt.Errorf("%s must differ from %s", role.field, previous)
+		}
+		seen[role.name] = role.field
+	}
+	if len(seen) != len(roles) {
+		return fmt.Errorf("database role environment variables must be distinct")
+	}
+	for field, name := range map[string]string{
+		"database.provisioner_url_env": c.Database.ProvisionerURLEnv,
+		"database.migration_url_env":   c.Database.MigrationURLEnv,
+	} {
+		if name == "" || !envNameRe.MatchString(name) {
+			return fmt.Errorf("%s %q is not a valid environment variable name", field, name)
+		}
 	}
 	if c.Database.MaxConnections < 1 || c.Database.MaxConnections > 100 {
 		return fmt.Errorf("database.max_connections %d outside [1, 100]", c.Database.MaxConnections)
@@ -115,14 +142,25 @@ func (c *Config) validateBackends() error {
 			if err := validateOpenAICompatibleBackend(name, b); err != nil {
 				return err
 			}
+			if b.CredentialEnv == c.Database.URLEnv ||
+				b.CredentialEnv == c.Database.ProvisionerURLEnv ||
+				b.CredentialEnv == c.Database.MigrationURLEnv {
+				return fmt.Errorf("backends.%s.credential_env must not reference a database role URL environment variable", name)
+			}
 		default:
 			return fmt.Errorf("backends.%s.type %q is not a supported adapter type (supported: fake, openai_compatible)", name, b.Type)
 		}
-		for _, f := range b.Features {
+		features, err := policy.CanonicalSet(fmt.Sprintf("backends.%s.features", name), b.Features)
+		if err != nil {
+			return err
+		}
+		for _, f := range features {
 			if !knownFeatures[f] {
 				return fmt.Errorf("backends.%s.features: unknown feature %q", name, f)
 			}
 		}
+		b.Features = features
+		c.Backends[name] = b
 	}
 	return nil
 }
@@ -174,7 +212,7 @@ func validateOpenAICompatibleBackend(name string, b BackendConfig) error {
 func validateBackendURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid URL %q: %v", raw, err)
+		return fmt.Errorf("invalid backend URL")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("unsupported scheme %q (only http and https)", u.Scheme)
@@ -222,6 +260,22 @@ func (c *Config) validateWorkloads() error {
 		if err := domain.ValidateSlug("workload", name); err != nil {
 			return fmt.Errorf("workloads: %w", err)
 		}
+		if w.AllowedCapabilities == nil && !w.allowedCapabilitiesSet {
+			return fmt.Errorf("workloads.%s.allowed_capabilities is required (an empty array means deny-all)", name)
+		}
+		allowed, err := policy.CanonicalSet(fmt.Sprintf("workloads.%s.allowed_capabilities", name), w.AllowedCapabilities)
+		if err != nil {
+			return err
+		}
+		for _, capability := range allowed {
+			if _, ok := c.Capabilities[capability]; !ok {
+				return fmt.Errorf("workloads.%s.allowed_capabilities references unknown capability %q", name, capability)
+			}
+		}
+		w.AllowedCapabilities = allowed
+		if w.WorkloadTimeoutSeconds < 1 || w.WorkloadTimeoutSeconds > 3600 {
+			return fmt.Errorf("workloads.%s.workload_timeout_seconds %d outside [1, 3600]", name, w.WorkloadTimeoutSeconds)
+		}
 		if _, err := domain.ParsePriorityClass(w.PriorityClass); err != nil {
 			return fmt.Errorf("workloads.%s: %w", name, err)
 		}
@@ -250,16 +304,22 @@ func (c *Config) validateWorkloads() error {
 				return fmt.Errorf("workloads.%s.allowed_generation.%s: %w", name, field, err)
 			}
 		}
-		for _, f := range w.RequiredFeatures {
+		features, err := policy.CanonicalSet(fmt.Sprintf("workloads.%s.required_features", name), w.RequiredFeatures)
+		if err != nil {
+			return err
+		}
+		for _, f := range features {
 			if !knownFeatures[f] {
 				return fmt.Errorf("workloads.%s.required_features: unknown feature %q", name, f)
 			}
 		}
+		w.RequiredFeatures = features
 		if w.Retention != nil {
 			if err := c.validateRetention(*w.Retention, fmt.Sprintf("workloads.%s.retention", name)); err != nil {
 				return err
 			}
 		}
+		c.Workloads[name] = w
 	}
 	return nil
 }

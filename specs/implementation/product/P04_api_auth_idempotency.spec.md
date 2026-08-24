@@ -86,7 +86,8 @@ admission, idempotency, cancellation, status, result, health, and readiness.
 
 - `curl` examples work against an isolated test API.
 - Task remains queued because no worker exists, proving API does not infer.
-- Token provisioning output warns that the token is shown once.
+- Token provisioning writes the credential only to an explicitly selected
+  mode-0600 file and never prints the plaintext token.
 - API binds loopback by default.
 
 ## Stop Conditions

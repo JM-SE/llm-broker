@@ -16,7 +16,7 @@ import (
 func retentionWorkload(t *testing.T) (Client, WorkloadPolicy) {
 	t.Helper()
 	client := mustCreateClient(t, adminStore, "cleanup-client")
-	policy, err := adminStore.UpsertWorkloadPolicy(context.Background(), WorkloadPolicy{
+	policy := applyPolicy(t, adminStore, WorkloadPolicy{
 		Name:                     "cleanup-workload",
 		PriorityClass:            "normal",
 		MaxActiveTasks:           250,
@@ -30,9 +30,6 @@ func retentionWorkload(t *testing.T) (Client, WorkloadPolicy) {
 		ResultRetentionSeconds:   86400, // 24h
 		MetadataRetentionSeconds: 2592000,
 	})
-	if err != nil {
-		t.Fatalf("upsert retention policy: %v", err)
-	}
 	return client, policy
 }
 
@@ -82,7 +79,7 @@ func TestCleanupPurgesPayloadThenResultThenTask(t *testing.T) {
 
 	// 2h after finish: payload (1h retention) is gone, task and result remain.
 	backdate(t, task.ID, 2*time.Hour)
-	counts, err := adminStore.CleanupExpired(ctx, 100)
+	counts, err := rtStore.CleanupExpired(ctx, 100)
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
@@ -98,7 +95,7 @@ func TestCleanupPurgesPayloadThenResultThenTask(t *testing.T) {
 
 	// 2 days after finish: result (24h) is gone too.
 	backdate(t, task.ID, 48*time.Hour)
-	counts, err = adminStore.CleanupExpired(ctx, 100)
+	counts, err = rtStore.CleanupExpired(ctx, 100)
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
@@ -116,7 +113,7 @@ func TestCleanupPurgesPayloadThenResultThenTask(t *testing.T) {
 
 	// 40 days after finish: metadata (30d) is gone, the whole task disappears.
 	backdate(t, task.ID, 40*24*time.Hour)
-	counts, err = adminStore.CleanupExpired(ctx, 100)
+	counts, err = rtStore.CleanupExpired(ctx, 100)
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
