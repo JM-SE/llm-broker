@@ -16,7 +16,7 @@ h00_capture_command() {
 		return 2
 	}
 	case "$sanitized_command" in
-		*BUNDLE*|*POINTER_FILE*|*DYNAMIC_CANARY*|*PASSWORD*|*TOKEN*|*postgres://*|*://*@*)
+		*BUNDLE*|*POINTER_FILE*|*DYNAMIC_CANARY*|*PASSWORD*|*TOKEN*|*postgres*|*://*@*)
 			echo "capture command descriptor contains a forbidden placeholder or secret" >&2
 			return 2
 		;;
