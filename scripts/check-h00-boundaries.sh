@@ -29,7 +29,7 @@ mapfile -t files <"$scope_file"
 
 if ((${#files[@]} > 0)); then
 	set +e
-	grep -IEn "$H00_PRODUCT_PATTERN" "${files[@]}" >"$hit_file" 2>/dev/null
+	h00_scan_product_files "${files[@]}" >"$hit_file" 2>/dev/null
 	status=$?
 	set -e
 	if [[ "$status" -eq 0 ]]; then

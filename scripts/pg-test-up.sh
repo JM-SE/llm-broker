@@ -12,6 +12,20 @@ NAME="${LLM_BROKER_TEST_PG_NAME:-llm-broker-test-pg}"
 PORT="${LLM_BROKER_TEST_PG_PORT:-55432}"
 IMAGE="${LLM_BROKER_TEST_PG_IMAGE:-postgres:17}"
 DB="llm_broker_test"
+POINTER_FILE=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --pointer-file)
+      POINTER_FILE="${2:?missing pointer file path}"
+      shift 2
+      ;;
+    *)
+      echo "usage: scripts/pg-test-up.sh [--pointer-file PATH]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 if docker inspect "$NAME" >/dev/null 2>&1; then
   echo "container $NAME already exists; destroy it first with scripts/pg-test-down.sh" >&2
@@ -76,4 +90,11 @@ export TEST_DATABASE_RUNTIME_URL="postgres://llm_broker_runtime:${RUNTIME_PASSWO
 EOF
 )
 chmod 600 "$ENV_FILE"
-printf 'export LLM_BROKER_TEST_ENV_FILE=%q\n' "$ENV_FILE"
+assignment="$(printf 'export LLM_BROKER_TEST_ENV_FILE=%q\n' "$ENV_FILE")"
+if [ -n "$POINTER_FILE" ]; then
+  (umask 077; printf '%s' "$assignment" >"$POINTER_FILE")
+  chmod 600 "$POINTER_FILE"
+  printf 'test environment pointer written\n'
+else
+  printf '%s' "$assignment"
+fi

@@ -69,8 +69,39 @@ Real restore procedure:
 6. Start the worker, then the API, and verify `/ready` plus a disposable fake
    smoke task before real traffic. Mixed old/new binaries are unsupported.
 
+For the disposable H00 fake-only no-live-contact rehearsal, prefetch the image
+and dependencies with the normal Compose file, then run the services with the
+internal-network override. Use a candidate-scoped network name and retain only
+sanitized service/network inspection output:
+
+```bash
+export H00_EVIDENCE_NETWORK_NAME="llm-broker-h00-evidence-<candidate>"
+docker compose -f compose.example.yaml build
+docker compose -f compose.example.yaml -f compose.evidence-internal.yaml \
+  up -d worker api
+docker network inspect "$H00_EVIDENCE_NETWORK_NAME"
+```
+
+The override places `db`, migrations, policy application, API, and worker on
+the same Docker `internal: true` network. Confirm the API and worker container
+network attachments before the fake health/readiness/task checks. Tear down the
+candidate-scoped project and network through Compose cleanup afterward.
+
 The former `deploy/compose/seed.sql` hand-seeding procedure is unsupported and
 has been removed. Policy state must be projected through `policy apply`.
+
+The Compose equivalent for a disposable existing-volume rehearsal is:
+
+```bash
+docker compose up -d db
+docker compose run --rm role-bootstrap
+```
+
+Starting `db` first lets `init-roles.sh` create the roles on the persistent
+volume; the explicit `role-bootstrap` run then exercises the existing-role
+branch, including password/attribute reset and broad-grant revocation. Retain
+only sanitized role attributes, membership counts, and grant counts in H00
+evidence.
 
 ## Rollback
 

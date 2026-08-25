@@ -42,10 +42,12 @@ h00_verify_static_inventories
 canary="$(realpath "$canary")"
 
 files_file="$(mktemp)"
+payload_files_file="$(mktemp)"
 hit_file="$(mktemp)"
-trap 'rm -f -- "$files_file" "$hit_file"' EXIT
+trap 'rm -f -- "$files_file" "$payload_files_file" "$hit_file"' EXIT
 h00_repo_absolute_files >"$files_file"
-h00_payload_files "$payload" >>"$files_file"
+h00_payload_files "$payload" >"$payload_files_file"
+cat "$payload_files_file" >>"$files_file"
 sort -u -o "$files_file" "$files_file"
 
 while IFS= read -r file; do
@@ -67,6 +69,25 @@ while IFS= read -r file; do
 		fi
 	done
 done <"$files_file"
+
+# Temporary credential/environment-file paths are dynamic canaries even when
+# the canary inventory was incomplete. Check the finalized payload separately
+# from tracked source so the scanner implementation can describe its own
+# temporary-file templates without exempting captured evidence.
+temporary_path_pattern='LLM_BROKER_TEST_ENV_FILE[[:space:]]*=[[:space:]]*[^[:space:]]+|/(tmp|var/tmp)/llm-broker-(test-env|test-docker-env)\.[[:alnum:]_-]+'
+while IFS= read -r file; do
+	set +e
+	grep -IEq -- "$temporary_path_pattern" "$file"
+	status=$?
+	set -e
+	if [[ "$status" -eq 0 ]]; then
+		echo "H00 temporary credential/environment path scan failed" >&2
+		exit 1
+	elif [[ "$status" -gt 1 ]]; then
+		echo "H00 temporary credential/environment path scan could not inspect its payload" >&2
+		exit 1
+	fi
+done <"$payload_files_file"
 
 for inventory in "$H00_PRIVATE_PATH_PREFIXES_FILE" "$H00_CONCRETE_INTEGRATION_NAMES_FILE"; do
 	while IFS= read -r needle; do

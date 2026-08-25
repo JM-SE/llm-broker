@@ -38,6 +38,10 @@ date -u +%Y-%m-%dT%H:%M:%SZ
 git rev-parse HEAD
 git rev-parse HEAD^{tree}
 git status --porcelain=v1 --untracked-files=all
+POINTER_FILE="$(mktemp)"
+scripts/pg-test-up.sh --pointer-file "$POINTER_FILE" >recovery/pg-test-up.log
+. "$POINTER_FILE"
+rm -f -- "$POINTER_FILE"
 make check
 EOF
 printf 'role probes: pending execution\n' >"$output/manifest/role-map.txt"

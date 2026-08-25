@@ -63,6 +63,22 @@ services:
     command: ["policy", "apply"]
     restart: "no"
 
+  # Run explicitly for an existing-volume upgrade. Fresh volumes already
+  # create these roles through init-roles.sh.
+  role-bootstrap:
+    image: postgres:17
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      LLM_BROKER_MIGRATION_DATABASE_URL: postgres://llm_broker:${LLM_BROKER_DB_PASSWORD}@db:5432/llm_broker?sslmode=disable
+      LLM_BROKER_PROVISIONER_PASSWORD: ${LLM_BROKER_PROVISIONER_PASSWORD:?set a provisioner password}
+      LLM_BROKER_RUNTIME_PASSWORD: ${LLM_BROKER_RUNTIME_PASSWORD:?set a runtime password}
+    volumes:
+      - ./deploy/compose/bootstrap-roles.sh:/usr/local/bin/bootstrap-roles.sh:ro
+    command: ["/usr/local/bin/bootstrap-roles.sh"]
+    restart: "no"
+
   api:
     build: .
     depends_on:

@@ -60,6 +60,10 @@ h00_product_scope() {
 	return 0
 }
 
+h00_scan_product_files() {
+	grep -IEin -- "$H00_PRODUCT_PATTERN" "$@"
+}
+
 h00_all_repo_files() {
 	git ls-files
 }
