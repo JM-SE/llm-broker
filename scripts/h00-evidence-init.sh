@@ -11,7 +11,12 @@ output="${1:-/home/jmse/homelab/ai/projects/llm-broker/generated/H00/$(git rev-p
 	echo "H00 evidence candidate must be created from a clean worktree" >&2
 	exit 1
 }
-mkdir -p "$output"/{manifest,remote-ci,automated,manual,recovery,scans}
+[[ ! -e "$output" ]] || {
+	echo "H00 evidence output already exists; refusing to overwrite a candidate or dry run" >&2
+	exit 1
+}
+mkdir -p "$output"/{manifest,remote-ci,automated,manual,recovery,scans,candidate-evidence}
+h00_materialize_static_inventories
 h00_verify_static_inventories
 commit_sha="$(git rev-parse HEAD)"
 tree_sha="$(git rev-parse 'HEAD^{tree}')"
@@ -28,22 +33,23 @@ printf '{"candidate_sha":"%s","tree_sha":"%s","created_utc":"%s","concrete_inven
 
 {
 	date -u '+%Y-%m-%dT%H:%M:%SZ'
-	go version
+	go version 2>/dev/null || printf 'go=not-available-on-host\n'
 	docker version --format '{{.Server.Version}}' 2>/dev/null || true
 	docker compose version 2>/dev/null || true
 } >"$output/manifest/tool-versions.txt"
 
-cat >"$output/manifest/commands.txt" <<'EOF'
-date -u +%Y-%m-%dT%H:%M:%SZ
-git rev-parse HEAD
-git rev-parse HEAD^{tree}
-git status --porcelain=v1 --untracked-files=all
-POINTER_FILE="$(mktemp)"
-scripts/pg-test-up.sh --pointer-file "$POINTER_FILE" >recovery/pg-test-up.log
-. "$POINTER_FILE"
-rm -f -- "$POINTER_FILE"
-make check
-EOF
-printf 'role probes: pending execution\n' >"$output/manifest/role-map.txt"
+: >"$output/manifest/commands.txt"
+: >"$output/manifest/role-map.txt"
+printf 'descriptor_id\tsanitized_command\toutput\tpackages\texit_code\n' >"$output/manifest/command-descriptors.tsv"
+printf 'scanner_id\tcommand_identity\nproduct_boundary\tscripts/check-h00-boundaries.sh\nsecret_private_payload\tscripts/check-h00-artifacts.sh\n' >"$output/manifest/scanner-descriptors.tsv"
+cp "$root/scripts/h00-evidence-id-map.tsv" "$output/manifest/e3-mapping-rules.tsv"
 printf 'product_pattern_sha256=%s\n' "$pattern_sha" >"$output/manifest/scan-patterns.txt"
 printf 'product_scope_sha256=%s\n' "$scope_sha" >"$output/manifest/scope-manifest.txt"
+{
+	printf 'concrete_integration_names_mode=%s\n' "$(stat -c '%a' "$H00_CONCRETE_INTEGRATION_NAMES_FILE")"
+	printf 'concrete_integration_names_sha256=%s\n' "$H00_CONCRETE_INTEGRATION_NAMES_SHA256"
+	printf 'concrete_integration_names_count=%s\n' "$H00_CONCRETE_INTEGRATION_NAMES_COUNT"
+	printf 'private_path_prefixes_mode=%s\n' "$(stat -c '%a' "$H00_PRIVATE_PATH_PREFIXES_FILE")"
+	printf 'private_path_prefixes_sha256=%s\n' "$H00_PRIVATE_PATH_PREFIXES_SHA256"
+	printf 'private_path_prefixes_count=%s\n' "$H00_PRIVATE_PATH_PREFIXES_COUNT"
+} >"$output/manifest/static-inventory-verification.txt"

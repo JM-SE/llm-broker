@@ -75,16 +75,26 @@ internal-network override. Use a candidate-scoped network name and retain only
 sanitized service/network inspection output:
 
 ```bash
-export H00_EVIDENCE_NETWORK_NAME="llm-broker-h00-evidence-<candidate>"
+export COMPOSE_PROJECT_NAME="h00-<candidate>"
+export H00_EVIDENCE_NETWORK_NAME="${COMPOSE_PROJECT_NAME}-evidence"
+export H00_COMPOSE_ARGS="-f compose.example.yaml -f compose.evidence-internal.yaml"
 docker compose -f compose.example.yaml build
-docker compose -f compose.example.yaml -f compose.evidence-internal.yaml \
-  up -d worker api
+docker compose $H00_COMPOSE_ARGS up -d db
+docker compose $H00_COMPOSE_ARGS run --rm role-bootstrap
+docker compose $H00_COMPOSE_ARGS run --rm migrate migrate up
+docker compose $H00_COMPOSE_ARGS run --rm policy-apply policy apply
+docker compose $H00_COMPOSE_ARGS up -d worker
+docker compose $H00_COMPOSE_ARGS up -d api
 docker network inspect "$H00_EVIDENCE_NETWORK_NAME"
 ```
 
 The override places `db`, migrations, policy application, API, and worker on
-the same Docker `internal: true` network. Confirm the API and worker container
-network attachments before the fake health/readiness/task checks. Tear down the
+the same Docker `internal: true` network and removes the base file's host port
+publications for both PostgreSQL and the API. Confirm the effective merged
+configuration has no `db.ports` or `api.ports`, then confirm the API, worker,
+database, and one-shot services' network attachments before the fake
+health/readiness/task checks. The worker and API commands are intentionally
+separate: do not replace them with `up -d worker api`. Tear down the
 candidate-scoped project and network through Compose cleanup afterward.
 
 The former `deploy/compose/seed.sql` hand-seeding procedure is unsupported and

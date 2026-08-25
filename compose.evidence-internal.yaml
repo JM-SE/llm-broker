@@ -5,6 +5,7 @@
 services:
   db:
     networks: [h00_evidence]
+    ports: !reset []
   migrate:
     networks: [h00_evidence]
   policy-apply:
@@ -13,6 +14,7 @@ services:
     networks: [h00_evidence]
   api:
     networks: [h00_evidence]
+    ports: !reset []
   worker:
     networks: [h00_evidence]
 

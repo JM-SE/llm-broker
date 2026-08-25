@@ -31,6 +31,7 @@ fmt-check:
 
 scan:
 	./scripts/h00-scan-contract-test.sh
+	./scripts/h00-evidence-preflight-contract-test.sh
 	./scripts/check-h00-boundaries.sh
 
 

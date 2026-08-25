@@ -9,7 +9,10 @@ for script in \
 	scripts/check-h00-boundaries.sh \
 	scripts/check-h00-artifacts.sh \
 	scripts/h00-evidence-init.sh \
-	scripts/h00-evidence-finalize.sh; do
+	scripts/h00-evidence-finalize.sh \
+	scripts/h00-evidence-capture-common.sh \
+	scripts/h00-evidence-preflight.sh \
+	scripts/h00-evidence-preflight-contract-test.sh; do
 	bash -n "$script"
 done
 
@@ -61,6 +64,14 @@ printf 'Role Radar\n' >"$scan_fixture"
 }
 
 chmod 600 "$artifact_canary"
+cat >"$artifact_canary" <<'EOF'
+role_passwords	contract-role-password
+client_tokens	contract-client-token
+backend_credentials	contract-backend-credential
+credential_urls	contract-credential-url
+bearer_headers	contract-bearer-header
+temporary_paths	/tmp/contract-temporary-path
+EOF
 printf 'export LLM_BROKER_TEST_ENV_FILE=/tmp/llm-broker-test-env.A1b2C3\n' >"$artifact_payload/leak.txt"
 if scripts/check-h00-artifacts.sh --payload "$artifact_payload" --canary "$artifact_canary" >/dev/null 2>&1; then
 	echo "H00 C6 temporary-path artifact contract failed" >&2

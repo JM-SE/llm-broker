@@ -9,21 +9,34 @@ H00_PRIVATE_PATH_PREFIXES_FILE="${H00_PRIVATE_PATH_PREFIXES_FILE:-/home/jmse/hom
 H00_EMPTY_INVENTORY_SHA256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 H00_PRODUCT_PATTERN='role[[:punct:][:space:]]*radar|y[[:punct:][:space:]]*t[[:punct:][:space:]]*pipe|llama[[:punct:][:space:]]*swap'
 
-h00_materialize_and_verify_inventory() {
+h00_inventory_is_safe_file() {
 	local path="$1"
-	if [[ ! -e "$path" ]]; then
-		mkdir -p "$(dirname "$path")"
-		(umask 077; : >"$path")
-	fi
-	[[ -f "$path" ]] || {
+	[[ -f "$path" && ! -L "$path" ]] || {
 		echo "H00 inventory is not a regular file" >&2
 		return 1
 	}
-	chmod 600 "$path"
 	[[ "$(stat -c '%a' "$path")" == "600" ]] || {
 		echo "H00 inventory mode is not 0600" >&2
 		return 1
 	}
+	return 0
+}
+
+h00_materialize_static_inventories() {
+	local path
+	for path in "$H00_CONCRETE_INTEGRATION_NAMES_FILE" "$H00_PRIVATE_PATH_PREFIXES_FILE"; do
+		if [[ ! -e "$path" ]]; then
+			mkdir -p "$(dirname "$path")"
+			(umask 077; : >"$path")
+			chmod 600 "$path"
+		fi
+		h00_inventory_is_safe_file "$path"
+	done
+}
+
+h00_materialize_and_verify_inventory() {
+	local path="$1"
+	h00_inventory_is_safe_file "$path" || return 1
 	local digest count
 	digest="$(sha256sum "$path" | cut -d' ' -f1)"
 	count="$(grep -cve '^[[:space:]]*$' "$path" || true)"
@@ -35,8 +48,8 @@ h00_materialize_and_verify_inventory() {
 }
 
 h00_verify_static_inventories() {
-	h00_materialize_and_verify_inventory "$H00_CONCRETE_INTEGRATION_NAMES_FILE"
-	h00_materialize_and_verify_inventory "$H00_PRIVATE_PATH_PREFIXES_FILE"
+	h00_materialize_and_verify_inventory "$H00_CONCRETE_INTEGRATION_NAMES_FILE" || return 1
+	h00_materialize_and_verify_inventory "$H00_PRIVATE_PATH_PREFIXES_FILE" || return 1
 	H00_CONCRETE_INTEGRATION_NAMES_SHA256="$H00_EMPTY_INVENTORY_SHA256"
 	H00_PRIVATE_PATH_PREFIXES_SHA256="$H00_EMPTY_INVENTORY_SHA256"
 	H00_CONCRETE_INTEGRATION_NAMES_COUNT=0

@@ -5,10 +5,12 @@ root="$(git rev-parse --show-toplevel)"
 cd "$root"
 # shellcheck source=scripts/h00-scan-common.sh
 source "$root/scripts/h00-scan-common.sh"
+# shellcheck source=scripts/h00-evidence-capture-common.sh
+source "$root/scripts/h00-evidence-capture-common.sh"
 
 payload=""
 canary=""
-manifest=""
+parsed_canary=""
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--payload)
@@ -19,12 +21,12 @@ while [[ $# -gt 0 ]]; do
 		canary="${2:?missing dynamic canary file}"
 		shift 2
 		;;
-	--manifest)
-		manifest="${2:?missing manifest path}"
+	--parsed-canary)
+		parsed_canary="${2:?missing parsed canary path}"
 		shift 2
 		;;
 	*)
-		echo "usage: scripts/check-h00-artifacts.sh --payload DIR --canary FILE [--manifest PATH]" >&2
+		echo "usage: scripts/check-h00-artifacts.sh --payload DIR --canary FILE [--parsed-canary FILE]" >&2
 		exit 2
 		;;
 	esac
@@ -44,7 +46,19 @@ canary="$(realpath "$canary")"
 files_file="$(mktemp)"
 payload_files_file="$(mktemp)"
 hit_file="$(mktemp)"
-trap 'rm -f -- "$files_file" "$payload_files_file" "$hit_file"' EXIT
+parsed_owned=0
+categories_file="$(mktemp)"
+if [[ -z "$parsed_canary" ]]; then
+	parsed_canary="$(mktemp)"
+	parsed_owned=1
+	h00_validate_dynamic_canary "$canary" "$parsed_canary" "$categories_file"
+else
+	[[ -f "$parsed_canary" && ! -L "$parsed_canary" && "$(stat -c '%a' "$parsed_canary")" == "600" ]] || {
+		echo "H00 parsed dynamic canary must be a mode-0600 regular non-symlink" >&2
+		exit 1
+	}
+fi
+trap 'rm -f -- "$files_file" "$payload_files_file" "$hit_file" "$categories_file"; if [[ "$parsed_owned" == 1 ]]; then rm -f -- "$parsed_canary"; fi' EXIT
 h00_repo_absolute_files >"$files_file"
 h00_payload_files "$payload" >"$payload_files_file"
 cat "$payload_files_file" >>"$files_file"
@@ -115,12 +129,4 @@ while IFS= read -r value; do
 			exit 1
 		fi
 	done <"$files_file"
-done <"$canary"
-
-if [[ -n "$manifest" ]]; then
-	mkdir -p "$(dirname "$manifest")"
-	payload_sha="$(sha256sum <(h00_payload_files "$payload") | cut -d' ' -f1)"
-	repo_sha="$(sha256sum "$files_file" | cut -d' ' -f1)"
-	printf 'repo_target_sha256=%s\npayload_target_sha256=%s\nprivate_inventory_sha256=%s\nprivate_inventory_count=%s\ndynamic_inventory_sha256=%s\ndynamic_inventory_count=%s\ndynamic_categories=database_passwords,client_tokens,backend_credentials,credential_urls,bearer_headers,temporary_paths\n' \
-		"$repo_sha" "$payload_sha" "$H00_PRIVATE_PATH_PREFIXES_SHA256" "$H00_PRIVATE_PATH_PREFIXES_COUNT" "$dynamic_sha" "$dynamic_count" >"$manifest"
-fi
+	done <"$parsed_canary"
