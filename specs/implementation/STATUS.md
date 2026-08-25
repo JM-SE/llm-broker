@@ -2,9 +2,10 @@
 
 ## Current Gate
 
-- Current phase: product track complete (P00-P09 accepted).
-- State: product v1 accepted; integration track available.
-- Next optional phase: L00 (sanitized llama-swap/Qwen profile), only when the operator starts the integration track.
+- Current phase: hardening track H00 `accepted` 2026-08-26 (product track P00-P09 remains accepted).
+- State: H00 closed with candidate `96ce3ffb88af4c18a6d55187306193dc9e93e319` tree `45c731cc4b0ac4e084ca1e35a7861a976702f991`; E9 `PASS` independent review `reviews/H00-E9-independent-closure-review-2026-08-26.md`.
+- Next phase: H01 `ready_for_review` (true bounded scheduler affinity) — unblocked by H00 acceptance; H02 remains `blocked` until H01 accepted. Role-Radar F10.3A is now unblocked.
+- Integration track L00 remains optional and independent.
 - Git policy: commits are operator-controlled unless explicitly delegated for a phase.
 
 ## Product Track
@@ -22,11 +23,19 @@
 | P08 | `accepted` | approved (P08 gate waived per user instruction) |
 | P09 | `accepted` | approved |
 
+## Hardening Track
+
+| Phase | State | Approval | Evidence |
+| --- | --- | --- | --- |
+| H00 | `accepted` 2026-08-26 | approved — E9 PASS `96ce3ffb88af4c18a6d55187306193dc9e93e319` / `45c731cc` | `generated/H00/96ce3ffb88af4c18a6d55187306193dc9e93e319` + `reviews/H00-E9-independent-closure-review-2026-08-26.md` |
+| H01 | `ready_for_review` | unblocked by accepted H00 | — |
+| H02 | `blocked` | requires accepted H01 | — |
+
 ## Integration Track
 
 | Phase | State | Approval |
 | --- | --- | --- |
-| L00 | `pending` | unblocked by accepted P09 |
+| L00 | `pending` | unblocked by accepted P09 (independent of hardening) |
 | L01 | `blocked` | requires L00 |
 | L02 | `blocked` | requires L01 and maintenance approval |
 | L03 | `blocked` | requires L02 and cutover approval |
@@ -79,7 +88,8 @@
 - Product P09: accepted (packaging and release candidate, Docker, compose
   fake-mode, systemd examples, release artifacts).
 - Product track complete. Integration track optional and independent.
+- Hardening H00: `accepted` 2026-08-26 — candidate `96ce3ffb88af4c18a6d55187306193dc9e93e319` tree `45c731cc4b0ac4e084ca1e35a7861a976702f991`, E1-E8 PASS + E9 PASS `reviews/H00-E9-independent-closure-review-2026-08-26.md`, bundle `generated/H00/96ce3ffb88af4c18a6d55187306193dc9e93e319` frozen; H01 `ready_for_review`.
 
 ## Suggested Next Commit Message
 
-`docs: accept P09 and close product track P00-P09`
+`docs: accept H00 96ce3ff and unblock H01`
