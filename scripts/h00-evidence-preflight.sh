@@ -120,7 +120,13 @@ while IFS=$'\t' read -r descriptor command output packages exit_code; do
 	[[ "$exit_code" == 0 && -n "$command" && -n "$output" && -n "$packages" ]] || fail "malformed command ledger row"
 	[[ "$output" != /* && -f "$evidence/$output" ]] || fail "command ledger output path is missing or private"
 	case "$command" in
-		*BUNDLE*|*POINTER_FILE*|*DYNAMIC_CANARY*|*postgres://*|*://*@*) fail "unsafe command ledger descriptor" ;;
+		*BUNDLE*|*POINTER_FILE*|*DYNAMIC_CANARY*|*PASSWORD*|*TOKEN*) fail "unsafe command ledger descriptor" ;;
+	esac
+	case "$command" in
+		*postgres://*) fail "unsafe command ledger descriptor" ;;
+	esac
+	case "$command" in
+		*://*@*) fail "unsafe command ledger descriptor" ;;
 	esac
 done <"$evidence/manifest/commands.txt"
 while IFS=$'\t' read -r descriptor command output packages exit_code; do
