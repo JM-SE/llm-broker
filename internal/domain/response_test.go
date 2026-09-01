@@ -2,6 +2,7 @@ package domain
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -124,5 +125,32 @@ func TestResponseContractKindRules(t *testing.T) {
 	}
 	if err := (ResponseContract{Kind: "xml"}).Validate(); err == nil {
 		t.Error("unknown kind must fail")
+	}
+}
+
+func TestResponseContractJSONSchemaRoundTrip(t *testing.T) {
+	schema := []byte(`{"type":"object","required":["answer"],"properties":{"answer":{"type":"string"}}}`)
+	sc, err := NewSchemaContract(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := ResponseContract{Kind: ResponseJSONSchema, Schema: sc}
+	payload, err := original.Canonical()
+	if err != nil {
+		t.Fatalf("canonical response: %v", err)
+	}
+
+	var decoded ResponseContract
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("decode canonical response: %v", err)
+	}
+	if err := decoded.Validate(); err != nil {
+		t.Fatalf("decoded response contract invalid: %v", err)
+	}
+	if decoded.Schema == nil || !bytes.Equal(decoded.Schema.Canonical(), sc.Canonical()) {
+		t.Fatalf("schema was not preserved across JSON round-trip")
+	}
+	if err := decoded.Schema.Validate([]byte(`{"answer":"ok"}`)); err != nil {
+		t.Fatalf("round-tripped schema rejected valid output: %v", err)
 	}
 }

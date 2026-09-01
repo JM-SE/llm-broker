@@ -39,6 +39,31 @@ func TestDecodeTaskSubmission(t *testing.T) {
 	}
 }
 
+func TestDecodeTaskSubmissionWithJSONSchema(t *testing.T) {
+	body := `{
+		"workload": "default",
+		"capability": "instruct",
+		"messages": [{"role": "user", "content": "return an object"}],
+		"response": {
+			"kind": "json_schema",
+			"schema": {"type": "object", "required": ["answer"], "properties": {"answer": {"type": "string"}}}
+		}
+	}`
+	s, err := DecodeTaskSubmission(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("decode JSON Schema submission: %v", err)
+	}
+	if s.Response.Schema == nil {
+		t.Fatal("decoded JSON Schema is nil")
+	}
+	if err := s.Response.Schema.Validate([]byte(`{"answer":"ok"}`)); err != nil {
+		t.Fatalf("valid structured output rejected: %v", err)
+	}
+	if err := s.Response.Schema.Validate([]byte(`{"wrong":true}`)); err == nil {
+		t.Fatal("invalid structured output unexpectedly accepted")
+	}
+}
+
 func TestDecodeTaskSubmissionRejectsUnknownFields(t *testing.T) {
 	bodies := []string{
 		`{"workload": "default", "capability": "instruct", "messages": [{"role": "user", "content": "x"}], "response": {"kind": "text"}, "model": "gpt-4"}`,
