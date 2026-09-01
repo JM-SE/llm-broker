@@ -1,0 +1,24 @@
+# H00 E7 override. Build and prefetch dependencies with compose.example.yaml
+# first, then run the fake API/worker stack with every service on this internal
+# network. The caller should use a candidate-scoped H00_EVIDENCE_NETWORK_NAME.
+
+services:
+  db:
+    networks: [h00_evidence]
+    ports: !reset []
+  migrate:
+    networks: [h00_evidence]
+  policy-apply:
+    networks: [h00_evidence]
+  role-bootstrap:
+    networks: [h00_evidence]
+  api:
+    networks: [h00_evidence]
+    ports: !reset []
+  worker:
+    networks: [h00_evidence]
+
+networks:
+  h00_evidence:
+    name: ${H00_EVIDENCE_NETWORK_NAME:-llm-broker-h00-evidence}
+    internal: true

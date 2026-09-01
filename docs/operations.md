@@ -13,13 +13,19 @@ The active worker runs a bounded retention sweep every 10 minutes
 from the policy rows, and queued/running payloads are never eligible.
 Aggregate counts are logged and exposed as `llm_broker_retention_purged_total`.
 
-To reduce retention without a code change:
+To change retention without a code change, update the versioned operator
+configuration and project it through the provisioner workflow:
 
-```sql
-UPDATE workload_policies
-SET payload_retention_seconds = 1800  -- 30 minutes
-WHERE name = 'default';
+```bash
+llm-broker policy validate /etc/llm-broker/config.json
+llm-broker policy diff /etc/llm-broker/config.json
+llm-broker policy apply /etc/llm-broker/config.json
+llm-broker policy status /etc/llm-broker/config.json
 ```
+
+Never mutate `workload_policies` or its capability table directly. Direct SQL
+bypasses canonicalization, advisory locks, topology checks, and audit-friendly
+policy reports.
 
 The idempotency fingerprint (key + request hash) survives payload purge, so
 replayed requests keep returning the original task after the payload is
@@ -49,13 +55,63 @@ Real restore procedure:
 
 ## Upgrades
 
-1. Back up the database.
-2. Deploy the new binary.
-3. `llm-broker migrate status` to review pending migrations.
-4. `llm-broker migrate up` (forward-only; destructive migrations document
-   an irreversible boundary and require a restore rehearsal first).
-5. Verify `/ready` and a smoke task against the fake backend before real
-   traffic.
+1. Back up the database and stop every old API/worker.
+2. Install the H00 binary and configuration v2.
+3. For an existing database volume, create the provisioner and runtime roles
+   first with the migration-owner environment and
+   `deploy/compose/bootstrap-roles.sh`. Fresh Compose volumes create these
+   roles automatically through `init-roles.sh`. Do not put passwords in shell
+   arguments or logs.
+4. `llm-broker migrate status` then `llm-broker migrate up` with the migration
+   role (forward-only; no down migration).
+5. Run `policy validate`, `policy diff`, `policy apply`, and `policy status`
+   with the provisioner role. Do not start API/worker before apply succeeds.
+6. Start the worker, then the API, and verify `/ready` plus a disposable fake
+   smoke task before real traffic. Mixed old/new binaries are unsupported.
+
+For the disposable H00 fake-only no-live-contact rehearsal, prefetch the image
+and dependencies with the normal Compose file, then run the services with the
+internal-network override. Use a candidate-scoped network name and retain only
+sanitized service/network inspection output:
+
+```bash
+export COMPOSE_PROJECT_NAME="h00-<candidate>"
+export H00_EVIDENCE_NETWORK_NAME="${COMPOSE_PROJECT_NAME}-evidence"
+export H00_COMPOSE_ARGS="-f compose.example.yaml -f compose.evidence-internal.yaml"
+docker compose -f compose.example.yaml build
+docker compose $H00_COMPOSE_ARGS up -d db
+docker compose $H00_COMPOSE_ARGS run --rm role-bootstrap
+docker compose $H00_COMPOSE_ARGS run --rm migrate migrate up
+docker compose $H00_COMPOSE_ARGS run --rm policy-apply policy apply
+docker compose $H00_COMPOSE_ARGS up -d worker
+docker compose $H00_COMPOSE_ARGS up -d api
+docker network inspect "$H00_EVIDENCE_NETWORK_NAME"
+```
+
+The override places `db`, migrations, policy application, API, and worker on
+the same Docker `internal: true` network and removes the base file's host port
+publications for both PostgreSQL and the API. Confirm the effective merged
+configuration has no `db.ports` or `api.ports`, then confirm the API, worker,
+database, and one-shot services' network attachments before the fake
+health/readiness/task checks. The worker and API commands are intentionally
+separate: do not replace them with `up -d worker api`. Tear down the
+candidate-scoped project and network through Compose cleanup afterward.
+
+The former `deploy/compose/seed.sql` hand-seeding procedure is unsupported and
+has been removed. Policy state must be projected through `policy apply`.
+
+The Compose equivalent for a disposable existing-volume rehearsal is:
+
+```bash
+docker compose up -d db
+docker compose run --rm role-bootstrap
+```
+
+Starting `db` first lets `init-roles.sh` create the roles on the persistent
+volume; the explicit `role-bootstrap` run then exercises the existing-role
+branch, including password/attribute reset and broad-grant revocation. Retain
+only sanitized role attributes, membership counts, and grant counts in H00
+evidence.
 
 ## Rollback
 

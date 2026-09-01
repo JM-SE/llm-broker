@@ -46,8 +46,8 @@ func (s *Scheduler) SetMetrics(m *metrics.Metrics) { s.metrics = m }
 
 // ClaimNext claims the single best eligible task under current leadership:
 // highest effective priority (class base + bounded aging), then FIFO by
-// creation time and task ID. The affinity batch is a preference applied to
-// the selected task, never a bypass of the global ordering. ClaimNext is
+// creation time and task ID. Affinity may only reorder tasks inside the
+// maximum effective-priority cohort. ClaimNext is
 // safe for concurrent callers; the database guarantees each task is claimed
 // once.
 func (s *Scheduler) ClaimNext(ctx context.Context) (ClaimResult, error) {
@@ -56,7 +56,9 @@ func (s *Scheduler) ClaimNext(ctx context.Context) (ClaimResult, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ct, err := s.store.ClaimNextByPolicy(ctx, s.leader.WorkerID(), s.policy.Lease, eligibleSelectSQL())
+	now := s.now()
+	preferred, active := s.batch.PreferredCapability(now, s.policy.BatchSize, s.policy.BatchMaxAge)
+	ct, err := s.store.ClaimNextByPolicy(ctx, s.leader.WorkerID(), s.policy.Lease, eligibleSelectSQL(), active, preferred)
 	if errors.Is(err, postgres.ErrNoTaskAvailable) {
 		s.batch.Close()
 		return ClaimResult{NoTask: true, Decision: Decision{Reason: "no_eligible"}}, nil
@@ -65,7 +67,7 @@ func (s *Scheduler) ClaimNext(ctx context.Context) (ClaimResult, error) {
 		return ClaimResult{}, err
 	}
 	dec := s.batch.Consider(ct.Capability, ct.EffectivePriority,
-		s.policy.BatchSize, s.policy.BatchMaxAge, s.now())
+		s.policy.BatchSize, s.policy.BatchMaxAge, now)
 	if s.metrics != nil {
 		s.metrics.IncDecision(dec.Reason)
 	}

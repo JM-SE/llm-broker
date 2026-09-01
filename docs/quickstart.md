@@ -10,10 +10,13 @@ Compose.
 git clone <your-copy-of-the-repo> && cd llm-broker
 cp compose.example.yaml compose.yaml
 export LLM_BROKER_DB_PASSWORD="$(openssl rand -hex 24)"
+export LLM_BROKER_PROVISIONER_PASSWORD="$(openssl rand -hex 24)"
+export LLM_BROKER_RUNTIME_PASSWORD="$(openssl rand -hex 24)"
 docker compose build
 docker compose run --rm migrate migrate up
-docker compose exec -T db psql -U llm_broker -d llm_broker < deploy/compose/seed.sql
-docker compose up -d
+docker compose run --rm policy-apply policy apply
+docker compose up -d worker
+docker compose up -d api
 ```
 
 The API listens on `http://127.0.0.1:8010` (loopback only).
@@ -21,22 +24,44 @@ The API listens on `http://127.0.0.1:8010` (loopback only).
 ## 2. Provision a client credential
 
 ```bash
-docker compose exec api llm-broker client create demo
+credential_dir="$(mktemp -d)"
+chmod 700 "$credential_dir"
+docker compose run --rm --user "$(id -u):$(id -g)" \
+  -v "$credential_dir:/credentials:rw" policy-apply client create demo \
+  --credential-file /credentials/demo.credential
+chmod 600 "$credential_dir/demo.credential"
 ```
 
-The output shows a bearer token **exactly once**; store it. Grant the
-workload:
+The credential is written to a host-mounted exclusive mode-0600 file; it is
+never printed. Create a temporary curl configuration so the bearer value is
+not expanded into a curl command argument:
 
 ```bash
-docker compose exec api llm-broker client grant demo default
+curl_cfg="$(mktemp)"
+chmod 600 "$curl_cfg"
+printf 'header = "Authorization: Bearer %s"\n' \
+  "$(< "$credential_dir/demo.credential")" >"$curl_cfg"
+trap 'rm -f "$curl_cfg"' EXIT
+```
+
+Grant the workload:
+
+```bash
+docker compose run --rm policy-apply client grant demo default
+```
+
+Remove the temporary credential directory after the client has been securely
+stored elsewhere:
+
+```bash
+rm -rf "$credential_dir"
 ```
 
 ## 3. Submit a task and wait
 
 ```bash
-TOKEN="lbk_..."
 curl -sS -X POST http://127.0.0.1:8010/v1/tasks \
-  -H "Authorization: Bearer $TOKEN" \
+  --config "$curl_cfg" \
   -H "Idempotency-Key: demo-task-0001" \
   -H "Prefer: wait=30" \
   -H "Content-Type: application/json" \
@@ -54,9 +79,9 @@ can also be polled:
 
 ```bash
 curl -sS http://127.0.0.1:8010/v1/tasks/<task-id> \
-  -H "Authorization: Bearer $TOKEN"
+  --config "$curl_cfg"
 curl -sS http://127.0.0.1:8010/v1/tasks/<task-id>/result \
-  -H "Authorization: Bearer $TOKEN"
+  --config "$curl_cfg"
 ```
 
 ## 4. Operations
@@ -72,7 +97,7 @@ Cancel a queued task:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8010/v1/tasks/<task-id>/cancel \
-  -H "Authorization: Bearer $TOKEN"
+  --config "$curl_cfg"
 ```
 
 ## 5. Stop and reset
@@ -87,3 +112,21 @@ docker compose down -v     # destroys the database volume
   always scheduled by the worker — the API never infers.
 - Clients never select models, backends, or priorities.
 - Migrations run only when you run them.
+- Configuration is version 2: every workload declares an explicit
+  `allowed_capabilities` list (empty means deny-all) and
+  `workload_timeout_seconds` from 1 through 3600. Apply policy after migration
+  and before starting API/worker; hand-seeded policy SQL is unsupported.
+- The disposable Compose stack creates separate migration-owner, provisioner,
+  and runtime database roles. API/worker receive only the runtime credential;
+  policy commands receive only the provisioner credential.
+- Client credentials are written to an explicitly selected mode-0600 file and
+  are never printed by the CLI.
+
+## H00 acceptance evidence
+
+The closure gate is executed only from an immutable candidate commit. The
+external evidence bundle records the commit/tree identity, three database-role
+probes, required `make check`, focused acceptance output, Compose fake-mode
+rollout, restore rehearsal, cleanup inventory, and sanitized scans. Never use
+real model credentials or a live application database for this flow; keep
+candidate evidence under the registered external AI project workspace.

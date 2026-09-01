@@ -3,10 +3,9 @@ package scheduler
 import "time"
 
 // AffinityState tracks the open affinity batch: consecutive claims of the
-// same capability are preferred up to BatchSize or BatchMaxAge. A batch is a
-// preference, not an entitlement: the scheduler always claims the globally
-// best eligible task, so a task with higher effective priority of a
-// different capability naturally closes the batch before the next claim.
+// same capability are preferred within the maximum effective-priority cohort,
+// up to BatchSize or BatchMaxAge. A batch is a
+// preference, not an entitlement: strict effective priority remains global.
 type AffinityState struct {
 	Key      string
 	OpenedAt time.Time
@@ -27,8 +26,17 @@ type Decision struct {
 	Reason            string `json:"reason"`
 }
 
-// Consider updates the affinity state after one successful claim and returns
-// the diagnostic decision. A claim continues the open batch only when it has
+// PreferredCapability returns the capability eligible for pre-claim affinity,
+// if the batch is open and both bounds still permit a preference.
+func (a AffinityState) PreferredCapability(now time.Time, batchSize int, batchMaxAge time.Duration) (string, bool) {
+	if !a.Open || a.Key == "" || a.Claimed >= batchSize || now.Sub(a.OpenedAt) > batchMaxAge {
+		return "", false
+	}
+	return a.Key, true
+}
+
+// Consider records one successful claim and returns the diagnostic decision.
+// A claim continues the open batch only when it has
 // the same capability, the size bound is not reached, and the age bound
 // holds; otherwise the previous batch closes and a new one opens.
 func (a *AffinityState) Consider(capability string, effective, batchSize int, batchMaxAge time.Duration, now time.Time) Decision {

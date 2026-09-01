@@ -21,7 +21,19 @@ type Generation struct {
 	MinP        *float64 `json:"min_p,omitempty"`
 	Seed        *int64   `json:"seed,omitempty"`
 	Stop        []string `json:"stop,omitempty"`
+
+	present uint8
 }
+
+const (
+	generationMaxTokens uint8 = 1 << iota
+	generationTemperature
+	generationTopP
+	generationTopK
+	generationMinP
+	generationSeed
+	generationStop
+)
 
 // Intrinsic value bounds of the vocabulary. Workload policies may narrow
 // them further per deployment.
@@ -86,13 +98,106 @@ func (g *Generation) Validate() error {
 	return nil
 }
 
+// UnmarshalJSON records field presence independently from decoded values. In
+// particular, a JSON null scalar decodes to a nil pointer and a JSON null stop
+// list decodes to a nil slice, so value inspection alone cannot implement the
+// deny-by-absence policy.
+func (g *Generation) UnmarshalJSON(data []byte) error {
+	type plain Generation
+	var decoded plain
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	decoded.present = 0
+	for name := range fields {
+		decoded.present |= generationFieldBit(name)
+	}
+	*g = Generation(decoded)
+	return nil
+}
+
+func generationFieldBit(name string) uint8 {
+	switch name {
+	case "max_tokens":
+		return generationMaxTokens
+	case "temperature":
+		return generationTemperature
+	case "top_p":
+		return generationTopP
+	case "top_k":
+		return generationTopK
+	case "min_p":
+		return generationMinP
+	case "seed":
+		return generationSeed
+	case "stop":
+		return generationStop
+	default:
+		return 0
+	}
+}
+
+// PresentFields returns the generation fields supplied by the caller in
+// canonical vocabulary order. Values constructed directly in Go retain the
+// historical pointer/non-nil slice behavior; decoded JSON additionally
+// preserves explicit null and empty values.
+func (g Generation) PresentFields() []string {
+	fields := make([]string, 0, len(GenerationFieldNames))
+	for _, name := range GenerationFieldNames {
+		bit := generationFieldBit(name)
+		present := g.present&bit != 0
+		if !present {
+			switch name {
+			case "max_tokens":
+				present = g.MaxTokens != nil
+			case "temperature":
+				present = g.Temperature != nil
+			case "top_p":
+				present = g.TopP != nil
+			case "top_k":
+				present = g.TopK != nil
+			case "min_p":
+				present = g.MinP != nil
+			case "seed":
+				present = g.Seed != nil
+			case "stop":
+				present = g.Stop != nil
+			}
+		}
+		if present {
+			fields = append(fields, name)
+		}
+	}
+	return fields
+}
+
+// FieldPresent reports whether name was supplied, including when its JSON
+// value was null or an explicitly empty collection.
+func (g Generation) FieldPresent(name string) bool {
+	for _, field := range g.PresentFields() {
+		if field == name {
+			return true
+		}
+	}
+	return false
+}
+
 // NormalizedStop returns the stop tokens with duplicates removed and sorted.
 // Stop tokens form a set semantically; sorting makes the canonical form
 // independent of client ordering.
 func (g *Generation) NormalizedStop() []string {
+	if g.Stop == nil {
+		return nil
+	}
 	if len(g.Stop) < 2 {
 		if len(g.Stop) == 0 {
-			return nil
+			return []string{}
 		}
 		return []string{g.Stop[0]}
 	}
@@ -112,22 +217,52 @@ func (g *Generation) NormalizedStop() []string {
 // generation settings. Equivalent settings (differing key order, stop
 // ordering, duplicate stop tokens) always produce identical bytes.
 func (g Generation) Canonical() ([]byte, error) {
-	canon := struct {
-		MaxTokens   *int64   `json:"max_tokens,omitempty"`
-		Temperature *float64 `json:"temperature,omitempty"`
-		TopP        *float64 `json:"top_p,omitempty"`
-		TopK        *int64   `json:"top_k,omitempty"`
-		MinP        *float64 `json:"min_p,omitempty"`
-		Seed        *int64   `json:"seed,omitempty"`
-		Stop        []string `json:"stop,omitempty"`
-	}{
-		MaxTokens:   g.MaxTokens,
-		Temperature: g.Temperature,
-		TopP:        g.TopP,
-		TopK:        g.TopK,
-		MinP:        g.MinP,
-		Seed:        g.Seed,
-		Stop:        g.NormalizedStop(),
+	canon := make(map[string]any, len(g.PresentFields()))
+	for _, field := range g.PresentFields() {
+		switch field {
+		case "max_tokens":
+			if g.MaxTokens == nil {
+				canon[field] = nil
+			} else {
+				canon[field] = *g.MaxTokens
+			}
+		case "temperature":
+			if g.Temperature == nil {
+				canon[field] = nil
+			} else {
+				canon[field] = *g.Temperature
+			}
+		case "top_p":
+			if g.TopP == nil {
+				canon[field] = nil
+			} else {
+				canon[field] = *g.TopP
+			}
+		case "top_k":
+			if g.TopK == nil {
+				canon[field] = nil
+			} else {
+				canon[field] = *g.TopK
+			}
+		case "min_p":
+			if g.MinP == nil {
+				canon[field] = nil
+			} else {
+				canon[field] = *g.MinP
+			}
+		case "seed":
+			if g.Seed == nil {
+				canon[field] = nil
+			} else {
+				canon[field] = *g.Seed
+			}
+		case "stop":
+			if g.Stop == nil {
+				canon[field] = nil
+			} else {
+				canon[field] = g.NormalizedStop()
+			}
+		}
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

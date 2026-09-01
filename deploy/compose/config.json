@@ -1,11 +1,13 @@
 {
-  "version": 1,
+  "version": 2,
   "api": {
     "listen": "0.0.0.0:8010",
     "metrics_enabled": true
   },
   "database": {
-    "url_env": "LLM_BROKER_DATABASE_URL"
+    "url_env": "LLM_BROKER_DATABASE_URL",
+    "migration_url_env": "LLM_BROKER_MIGRATION_DATABASE_URL",
+    "provisioner_url_env": "LLM_BROKER_PROVISIONER_DATABASE_URL"
   },
   "retention": {
     "payload": "1h",
@@ -30,7 +32,9 @@
       "max_active_tasks": 10,
       "max_attempts": 3,
       "retry_delays_seconds": [1, 5],
-      "max_output_tokens": 2048
+      "max_output_tokens": 2048,
+      "allowed_capabilities": ["instruct"],
+      "workload_timeout_seconds": 300
     }
   }
 }

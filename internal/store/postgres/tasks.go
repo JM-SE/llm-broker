@@ -39,6 +39,8 @@ type Task struct {
 type TaskWithPayload struct {
 	Task
 	Payload []byte
+	// WorkloadSlug is the immutable policy identity carried by a claim.
+	WorkloadSlug string
 }
 
 // CreateTaskParams is the input for an atomic idempotent task creation.
@@ -71,11 +73,11 @@ func scanTask(row pgx.Row) (Task, error) {
 	return t, err
 }
 
-// CreateTask inserts the task row and its payload atomically. Under
-// concurrency, the same (client_id, idempotency_key) with the same request
-// hash yields exactly one created task and every caller receives the same task
-// ID; the same key with a different hash yields ErrConflict.
-func (s *Store) CreateTask(ctx context.Context, p CreateTaskParams) (CreateTaskResult, error) {
+// createTaskFixture inserts a task row for package-local database fixtures.
+// Production submission must use SubmitTask, which performs authentication,
+// durable authorization, policy validation, admission and locking atomically.
+// Keeping this helper unexported prevents application code from bypassing H00.
+func (s *Store) createTaskFixture(ctx context.Context, p CreateTaskParams) (CreateTaskResult, error) {
 	var res CreateTaskResult
 	err := s.withTx(ctx, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, `
@@ -311,16 +313,17 @@ type ClaimedTask struct {
 // ClaimNextByPolicy.
 func (s *Store) ClaimNextQueued(ctx context.Context, workerID uuid.UUID, lease time.Duration) (TaskWithPayload, error) {
 	ct, err := s.claimSelect(ctx, workerID, lease, `
-		SELECT t.id, t.client_id, t.workload_id, t.capability, t.idempotency_key,
+		SELECT t.id, t.client_id, t.workload_id, w.name, t.capability, t.idempotency_key,
 		       t.request_hash, t.state, t.attempts, t.lease_until, t.started_at,
 		       t.finished_at, t.cancel_requested_at, t.retry_available_at,
 		       t.created_at, t.updated_at,
 		       p.payload, 0::int AS effective_priority
 		FROM tasks t
 		JOIN task_payloads p ON p.task_id = t.id
+		JOIN workload_policies w ON w.id = t.workload_id
 		WHERE t.state = 'queued'
 		ORDER BY t.created_at, t.id
-		FOR UPDATE SKIP LOCKED
+		FOR UPDATE OF t SKIP LOCKED
 		LIMIT 1`)
 	if err != nil {
 		return TaskWithPayload{}, err
@@ -330,12 +333,13 @@ func (s *Store) ClaimNextQueued(ctx context.Context, workerID uuid.UUID, lease t
 
 // ClaimNextByPolicy claims the single best eligible task under the
 // broker-owned policy ordering. The query is built by the scheduler package
-// (the policy lives there); it must select the same 16 columns as
+// (the policy lives there); it must select the same claim projection columns as
 // claimSelect plus an effective_priority integer, ordered, and terminated
-// with FOR UPDATE SKIP LOCKED LIMIT 1. Eligibility (state, attempts, grants)
-// is part of the query so SQL and pure policy cannot disagree.
-func (s *Store) ClaimNextByPolicy(ctx context.Context, workerID uuid.UUID, lease time.Duration, query string) (ClaimedTask, error) {
-	return s.claimSelect(ctx, workerID, lease, query)
+// with FOR UPDATE SKIP LOCKED LIMIT 1. Eligibility (state and attempts) is
+// part of the query so SQL and pure policy cannot disagree; authorization is a
+// worker preflight concern.
+func (s *Store) ClaimNextByPolicy(ctx context.Context, workerID uuid.UUID, lease time.Duration, query string, args ...any) (ClaimedTask, error) {
+	return s.claimSelect(ctx, workerID, lease, query, args...)
 }
 
 // claimSelect is the single claim transaction: select exactly one eligible
@@ -351,8 +355,9 @@ func (s *Store) claimSelect(ctx context.Context, workerID uuid.UUID, lease time.
 		var t Task
 		var payload []byte
 		var effective int
+		var workloadSlug string
 		err := tx.QueryRow(ctx, query, args...).Scan(
-			&t.ID, &t.ClientID, &t.WorkloadID, &t.Capability, &t.IdempotencyKey,
+			&t.ID, &t.ClientID, &t.WorkloadID, &workloadSlug, &t.Capability, &t.IdempotencyKey,
 			&t.RequestHash, &t.State, &t.Attempts, &t.LeaseUntil, &t.StartedAt,
 			&t.FinishedAt, &t.CancelRequestedAt, &t.RetryAvailableAt,
 			&t.CreatedAt, &t.UpdatedAt,
@@ -391,7 +396,7 @@ func (s *Store) claimSelect(ctx context.Context, workerID uuid.UUID, lease time.
 		leaseUntil := now.Add(lease)
 		t.LeaseUntil = &leaseUntil
 		claimed = ClaimedTask{
-			TaskWithPayload:   TaskWithPayload{Task: t, Payload: payload},
+			TaskWithPayload:   TaskWithPayload{Task: t, Payload: payload, WorkloadSlug: workloadSlug},
 			EffectivePriority: effective,
 		}
 		return nil

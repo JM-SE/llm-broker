@@ -8,15 +8,15 @@ import (
 
 func TestRedactedJSONMasksCredentials(t *testing.T) {
 	json := `{
-		"version": 1,
+		"version": 2,
 		"api": {"listen": "127.0.0.1:8010"},
-		"database": {"url_env": "LLM_BROKER_DATABASE_URL"},
+		"database": {"url_env": "LLM_BROKER_DATABASE_URL", "provisioner_url_env": "LLM_BROKER_PROVISIONER_DATABASE_URL", "migration_url_env": "LLM_BROKER_MIGRATION_DATABASE_URL"},
 		"retention": {"payload": "1h", "result": "2h", "metadata": "3h"},
 		"backends": {
 			"primary": {"type": "openai_compatible", "base_url": "http://llm-runtime.example:8080/v1", "model": "alias", "credential_env": "LLM_BACKEND_API_KEY"}
 		},
 		"capabilities": {"instruct": {"backend": "primary"}},
-		"workloads": {"default": {"priority_class": "normal"}}
+		"workloads": {"default": {"priority_class": "normal", "allowed_capabilities": ["instruct"], "workload_timeout_seconds": 300}}
 	}`
 	cfg, err := Decode(strings.NewReader(json))
 	if err != nil {
@@ -59,15 +59,15 @@ func TestRedactedJSONNoZeroDelay(t *testing.T) {
 func TestConfigNeverReadsEnvSecrets(t *testing.T) {
 	t.Setenv("LLM_BACKEND_API_KEY", "super-secret-value-42")
 	json := `{
-		"version": 1,
+		"version": 2,
 		"api": {"listen": "127.0.0.1:8010"},
-		"database": {"url_env": "LLM_BROKER_DATABASE_URL"},
+		"database": {"url_env": "LLM_BROKER_DATABASE_URL", "provisioner_url_env": "LLM_BROKER_PROVISIONER_DATABASE_URL", "migration_url_env": "LLM_BROKER_MIGRATION_DATABASE_URL"},
 		"retention": {"payload": "1h", "result": "2h", "metadata": "3h"},
 		"backends": {
 			"primary": {"type": "openai_compatible", "base_url": "http://llm-runtime.example:8080/v1", "model": "alias", "credential_env": "LLM_BACKEND_API_KEY"}
 		},
 		"capabilities": {"instruct": {"backend": "primary"}},
-		"workloads": {"default": {"priority_class": "normal"}}
+		"workloads": {"default": {"priority_class": "normal", "allowed_capabilities": ["instruct"], "workload_timeout_seconds": 300}}
 	}`
 	cfg, err := Decode(strings.NewReader(json))
 	if err != nil {
@@ -84,13 +84,13 @@ func TestConfigNeverReadsEnvSecrets(t *testing.T) {
 
 func TestValidationErrorsIdentifyField(t *testing.T) {
 	json := `{
-		"version": 1,
+		"version": 2,
 		"api": {"listen": "not-a-port"},
-		"database": {"url_env": "LLM_BROKER_DATABASE_URL"},
+		"database": {"url_env": "LLM_BROKER_DATABASE_URL", "provisioner_url_env": "LLM_BROKER_PROVISIONER_DATABASE_URL", "migration_url_env": "LLM_BROKER_MIGRATION_DATABASE_URL"},
 		"retention": {"payload": "1h", "result": "2h", "metadata": "3h"},
 		"backends": {"fake": {"type": "fake"}},
 		"capabilities": {"instruct": {"backend": "fake"}},
-		"workloads": {"default": {"priority_class": "normal"}}
+		"workloads": {"default": {"priority_class": "normal", "allowed_capabilities": ["instruct"], "workload_timeout_seconds": 300}}
 	}`
 	_, err := Decode(strings.NewReader(json))
 	if err == nil {

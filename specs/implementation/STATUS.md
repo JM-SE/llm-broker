@@ -2,12 +2,11 @@
 
 ## Current Gate
 
-- Current phase: P09, Packaging and Release Candidate.
-- State: `ready_for_review`.
-- Previous phases: P00 through P08 accepted.
-- Git policy: no automatic commits; P07 was committed by the assistant on
-  explicit user request, otherwise changes are left for manual review and
-  user commits.
+- Current phase: hardening track H00 `accepted` 2026-08-26 (product track P00-P09 remains accepted).
+- State: H00 closed with candidate `96ce3ffb88af4c18a6d55187306193dc9e93e319` tree `45c731cc4b0ac4e084ca1e35a7861a976702f991`; E9 `PASS` independent review `reviews/H00-E9-independent-closure-review-2026-08-26.md`.
+- Next phase: H01 `ready_for_review` (true bounded scheduler affinity) — unblocked by H00 acceptance; H02 remains `blocked` until H01 accepted. Role-Radar F10.3A is now unblocked.
+- Integration track L00 remains optional and independent.
+- Git policy: commits are operator-controlled unless explicitly delegated for a phase.
 
 ## Product Track
 
@@ -22,13 +21,21 @@
 | P06 | `accepted` | approved |
 | P07 | `accepted` | approved |
 | P08 | `accepted` | approved (P08 gate waived per user instruction) |
-| P09 | `ready_for_review` | P08 accepted |
+| P09 | `accepted` | approved |
+
+## Hardening Track
+
+| Phase | State | Approval | Evidence |
+| --- | --- | --- | --- |
+| H00 | `accepted` 2026-08-26 | approved — E9 PASS `96ce3ffb88af4c18a6d55187306193dc9e93e319` / `45c731cc` | `generated/H00/96ce3ffb88af4c18a6d55187306193dc9e93e319` + `reviews/H00-E9-independent-closure-review-2026-08-26.md` |
+| H01 | `ready_for_review` | unblocked by accepted H00 | — |
+| H02 | `blocked` | requires accepted H01 | — |
 
 ## Integration Track
 
 | Phase | State | Approval |
 | --- | --- | --- |
-| L00 | `blocked` | requires accepted P09 |
+| L00 | `pending` | unblocked by accepted P09 (independent of hardening) |
 | L01 | `blocked` | requires L00 |
 | L02 | `blocked` | requires L01 and maintenance approval |
 | L03 | `blocked` | requires L02 and cutover approval |
@@ -49,31 +56,15 @@
   integration phases.
 - Made product completion independent from all integration phases.
 
-## P00 Runtime Record
-
-- No Go source or dependency was created.
-- No database/container/service was created or modified.
-- No systemd unit, runtime, listener, model, or client was changed.
-- No inference/network request was made.
-- No Git commit, tag, remote, or staging action was performed.
-
 ## Validation Evidence
 
-- Documentation set: 18 files and 2424 lines at validation.
-- Phase set: exactly P00-P09 and L00-L04; all 15 index references resolve.
-- Structure: every phase has status, objective, prerequisite/precondition, scope,
-  exclusions, deliverables, procedure, automated/manual acceptance, stop
-  conditions, and handoff.
-- State: one phase is `ready_for_review`; fourteen phases are `pending` and
-  blocked by the index gates.
-- Sanitization: no personal home path, known live port, concrete local model
-  filename, local container/database identity, or credential was found.
-- Product isolation: product phase specs contain no llama-swap, Qwen, YTPipe,
-  personal path, or concrete listener reference.
-- Formatting: ASCII-only; no trailing whitespace; `git diff --check` and cached
-  equivalent pass.
-- Repository: only `.git/` and `specs/`; branch `main`; no commits or staging;
-  `specs/` remains untracked for review.
+- Product phases P00-P09 implemented and accepted.
+- Automated suite: `go test -race -p 1 ./...` across product packages.
+- Packaging smoke: Docker Compose fake-mode end-to-end (migrate, seed, client
+  create/grant, POST Prefer wait, ready/metrics).
+- Release artifacts: linux amd64/arm64 tarballs + SHA256SUMS generated locally.
+- Product acceptance does not require YTPipe, llama-swap, or any named local
+  model/runtime.
 
 ## Approval Log
 
@@ -94,9 +85,11 @@
   backoff, cancel semantics, ambiguous recovery CLI).
 - Product P08: accepted (bounded metrics, sanitized event logging,
   retention job, threat model, restore rehearsal).
-- Product P09: ready for review (packaging and release candidate, Docker,
-  compose fake-mode, systemd examples, release artifacts).
+- Product P09: accepted (packaging and release candidate, Docker, compose
+  fake-mode, systemd examples, release artifacts).
+- Product track complete. Integration track optional and independent.
+- Hardening H00: `accepted` 2026-08-26 — candidate `96ce3ffb88af4c18a6d55187306193dc9e93e319` tree `45c731cc4b0ac4e084ca1e35a7861a976702f991`, E1-E8 PASS + E9 PASS `reviews/H00-E9-independent-closure-review-2026-08-26.md`, bundle `generated/H00/96ce3ffb88af4c18a6d55187306193dc9e93e319` frozen; H01 `ready_for_review`.
 
-## Suggested Commit Message
+## Suggested Next Commit Message
 
-`feat: P09 packaging and release candidate (Docker/compose fake-mode, systemd examples, release artifacts and checksums, docs)`
+`docs: accept H00 96ce3ff and unblock H01`

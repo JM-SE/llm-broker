@@ -4,9 +4,13 @@
 #
 #   cp compose.example.yaml compose.yaml
 #   export LLM_BROKER_DB_PASSWORD="$(openssl rand -hex 24)"
+#   export LLM_BROKER_PROVISIONER_PASSWORD="$(openssl rand -hex 24)"
+#   export LLM_BROKER_RUNTIME_PASSWORD="$(openssl rand -hex 24)"
 #   docker compose build
 #   docker compose run --rm migrate migrate up
-#   docker compose up -d
+#   docker compose run --rm policy-apply policy apply
+#   docker compose up -d worker
+#   docker compose up -d api
 #
 # Then follow docs/quickstart.md (client create, grant, submit).
 #
@@ -20,8 +24,11 @@ services:
       POSTGRES_USER: llm_broker
       POSTGRES_PASSWORD: ${LLM_BROKER_DB_PASSWORD:?set a strong password}
       POSTGRES_DB: llm_broker
+      LLM_BROKER_PROVISIONER_PASSWORD: ${LLM_BROKER_PROVISIONER_PASSWORD:?set a provisioner password}
+      LLM_BROKER_RUNTIME_PASSWORD: ${LLM_BROKER_RUNTIME_PASSWORD:?set a runtime password}
     volumes:
       - dbdata:/var/lib/postgresql/data
+      - ./deploy/compose/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
     ports:
       - "127.0.0.1:${LLM_BROKER_DB_PORT:-55433}:5432"
     healthcheck:
@@ -35,22 +42,53 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    environment: &broker-env
+    environment: &migration-env
       LLM_BROKER_CONFIG_FILE: /config/config.json
-      LLM_BROKER_DATABASE_URL: postgres://llm_broker:${LLM_BROKER_DB_PASSWORD}@db:5432/llm_broker?sslmode=disable
+      LLM_BROKER_MIGRATION_DATABASE_URL: postgres://llm_broker:${LLM_BROKER_DB_PASSWORD}@db:5432/llm_broker?sslmode=disable
     volumes:
       - ./deploy/compose/config.json:/config/config.json:ro
     command: ["migrate", "up"]
     restart: "no"
 
-  api:
+  policy-apply:
     build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      LLM_BROKER_CONFIG_FILE: /config/config.json
+      LLM_BROKER_PROVISIONER_DATABASE_URL: postgres://llm_broker_provisioner:${LLM_BROKER_PROVISIONER_PASSWORD}@db:5432/llm_broker?sslmode=disable
+    volumes:
+      - ./deploy/compose/config.json:/config/config.json:ro
+    command: ["policy", "apply"]
+    restart: "no"
+
+  # Run explicitly for an existing-volume upgrade. Fresh volumes already
+  # create these roles through init-roles.sh.
+  role-bootstrap:
+    image: postgres:17
     depends_on:
       db:
         condition: service_healthy
-    environment: *broker-env
+    environment:
+      LLM_BROKER_MIGRATION_DATABASE_URL: postgres://llm_broker:${LLM_BROKER_DB_PASSWORD}@db:5432/llm_broker?sslmode=disable
+      LLM_BROKER_PROVISIONER_PASSWORD: ${LLM_BROKER_PROVISIONER_PASSWORD:?set a provisioner password}
+      LLM_BROKER_RUNTIME_PASSWORD: ${LLM_BROKER_RUNTIME_PASSWORD:?set a runtime password}
+    volumes:
+      - ./deploy/compose/bootstrap-roles.sh:/usr/local/bin/bootstrap-roles.sh:ro
+    command: ["/usr/local/bin/bootstrap-roles.sh"]
+    restart: "no"
+
+  api:
+    build: .
+    depends_on:
+      policy-apply:
+        condition: service_completed_successfully
+    environment: &runtime-env
+      LLM_BROKER_CONFIG_FILE: /config/config.json
+      LLM_BROKER_DATABASE_URL: postgres://llm_broker_runtime:${LLM_BROKER_RUNTIME_PASSWORD}@db:5432/llm_broker?sslmode=disable
     ports:
-      - "127.0.0.1:8010:8010"
+      - "127.0.0.1:${LLM_BROKER_API_PORT:-8010}:8010"
     volumes:
       - ./deploy/compose/config.json:/config/config.json:ro
     command: ["api"]
@@ -64,9 +102,9 @@ services:
   worker:
     build: .
     depends_on:
-      db:
-        condition: service_healthy
-    environment: *broker-env
+      policy-apply:
+        condition: service_completed_successfully
+    environment: *runtime-env
     volumes:
       - ./deploy/compose/config.json:/config/config.json:ro
     command: ["worker"]

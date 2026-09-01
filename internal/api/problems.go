@@ -47,6 +47,14 @@ func writeProblem(w http.ResponseWriter, status int, code, title, detail string)
 	})
 }
 
+// writeForbidden is the single client-facing durable authorization outcome.
+// Its fields intentionally do not disclose which authorization predicate
+// failed.
+func writeForbidden(w http.ResponseWriter) {
+	writeProblem(w, http.StatusForbidden, codeForbidden, "Forbidden",
+		"workload or capability is not authorized")
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

@@ -10,18 +10,19 @@ restore, and retention. It is operator documentation, not product marketing.
 
 ## Roles
 
-Two roles are required, mirroring the two ways the process uses the database:
+Three roles are required, mirroring migration, provisioning, and runtime:
 
 | Role | Uses | Privileges |
 | --- | --- | --- |
 | Migration role | `llm-broker migrate` | Schema ownership; DDL |
-| Runtime role | `llm-broker api`, `llm-broker worker` | DML only (`SELECT`/`INSERT`/`UPDATE`/`DELETE`, sequence usage) |
+| Provisioner role | `policy diff/apply/status`, `client ...` | Clients, policies, capability rows, and grants; no DDL or slug updates |
+| Runtime role | `llm-broker api`, `llm-broker worker` | SELECT-only authorization tables plus task/execution state mutations |
 
 - The runtime role cannot create or alter tables (verified by integration
   tests). A compromise of the API or worker process cannot change the schema.
 - Connection URLs arrive from environment variables configured in the
-  application config (`database.url_env`); they are never stored in config
-  files.
+  application config (`url_env`, `migration_url_env`, and
+  `provisioner_url_env`); values are never stored in config files.
 - Runtime connections should be least-privilege per service: separate roles
   are also reasonable for `api` and `worker` if operator policy requires it.
 
@@ -39,6 +40,9 @@ Two roles are required, mirroring the two ways the process uses the database:
   startup instead of running against a schema it does not understand.
 - Migration SQL is reviewed like application code. Destructive migrations must
   define their `down` or document an irreversible boundary explicitly.
+- H00 migration `00004_h00_workload_capability_authorization.sql` is
+  forward-only. Back up first and use planned downtime; existing policies are
+  deny-all with null topology digests until `policy apply` succeeds.
 - `migrate` operates on exactly the database named by the configured
   environment variable. Point the command at the intended database; it is the
   operator's confirmation step.
@@ -50,7 +54,10 @@ Tables (see `migrations/00001_initial_schema.sql` for exact DDL):
 - `clients` — operator-provisioned identities; only credential digests are
   stored, never tokens.
 - `workload_policies` — priority class, limits, retries, retention windows,
-  allowed generation fields, required adapter features.
+  exact timeout, topology digest, allowed generation fields, required adapter
+  features.
+- `workload_policy_capabilities` — normalized allowlist; zero rows means
+  deny-all.
 - `client_workload_grants` — which client may submit which workload.
 - `tasks` — operational metadata: state, idempotency key, request hash,
   lease, timestamps. The idempotency key and request hash survive payload
@@ -108,3 +115,13 @@ harness at a database that contains real data.
 Each package test harness resets the schema, so package test binaries must
 run serially: use `go test -p 1 ./...` (also set in CI). Parallel package
 execution would race the shared schema resets.
+
+The harness requires `TEST_DATABASE_URL` (migration owner),
+`TEST_DATABASE_PROVISIONER_URL` (policy/client provisioner), and
+`TEST_DATABASE_RUNTIME_URL` (API/worker runtime). These credentials are never
+substituted for one another.
+
+`scripts/pg-test-up.sh` writes these URLs to a temporary mode-0600 environment
+file and prints only the file assignment. Load it with `source
+"$LLM_BROKER_TEST_ENV_FILE"`; never paste or log the URLs. The down script
+removes the environment file when that variable is exported.

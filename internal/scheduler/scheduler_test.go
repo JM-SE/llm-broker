@@ -95,7 +95,7 @@ func TestTieBreakByCreatedAtThenID(t *testing.T) {
 	// Force identical creation times: ordering falls to the task ID.
 	ts := time.Now().UTC()
 	for _, id := range []interface{}{first, second} {
-		if _, err := adminStore.Pool().Exec(context.Background(),
+		if _, err := adminDB.ExecContext(context.Background(),
 			"UPDATE tasks SET created_at = $2 WHERE id = $1", id, ts); err != nil {
 			t.Fatalf("pin created_at: %v", err)
 		}
@@ -118,7 +118,7 @@ func TestExhaustedAttemptsExcluded(t *testing.T) {
 	policy := mustPolicy(t, "attempts-policy", "normal", 2)
 	mustGrant(t, client.ID, policy.ID)
 	id := mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
-	if _, err := adminStore.Pool().Exec(context.Background(),
+	if _, err := adminDB.ExecContext(context.Background(),
 		"UPDATE tasks SET attempts = 2 WHERE id = $1", id); err != nil {
 		t.Fatalf("set attempts: %v", err)
 	}
@@ -133,20 +133,24 @@ func TestExhaustedAttemptsExcluded(t *testing.T) {
 	}
 }
 
-func TestNotGrantedExcluded(t *testing.T) {
+func TestNotGrantedRemainsClaimableForWorkerPreflight(t *testing.T) {
 	clearQueued(t)
 	client := mustClient(t, "grant-client")
 	policy := mustPolicy(t, "grant-policy", "normal", 3)
-	// No grant: the task must not be eligible.
-	mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
+	// No grant: the scheduler still claims it so worker preflight can
+	// terminalize the revoked queued task instead of stranding it.
+	id := mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
 
 	_, s := newScheduler(t)
 	res, err := s.ClaimNext(context.Background())
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	if !res.NoTask {
-		t.Fatalf("claimed a task whose client has no grant: %s", res.Task.ID)
+	if res.NoTask {
+		t.Fatal("revoked queued task was stranded by scheduler eligibility")
+	}
+	if res.Task.ID != id || res.Task.WorkloadSlug != policy.Name {
+		t.Fatalf("claim projection = id %s slug %q, want %s %q", res.Task.ID, res.Task.WorkloadSlug, id, policy.Name)
 	}
 }
 
@@ -269,6 +273,137 @@ func TestBatchAffinityPreferenceAndClose(t *testing.T) {
 	}
 	if res3.Decision.Reason != "batch_opened" || res3.Decision.BatchKey != "thinking" {
 		t.Errorf("claim 3 decision = %+v, want reopened for thinking", res3.Decision)
+	}
+}
+
+func TestAffinityOnlyReordersMaximumPriorityCohort(t *testing.T) {
+	clearQueued(t)
+	client := mustClient(t, "affinity-cohort-client")
+	normal := mustPolicy(t, "affinity-cohort-normal", "normal", 3)
+	mustGrant(t, client.ID, normal.ID)
+
+	// Establish an instruct batch before putting an older thinking task in the
+	// queue. Affinity should then reorder only the equal-priority cohort.
+	seed := mustEnqueue(t, client.ID, normal.ID, "instruct", uniqueName("k"))
+	_, s := newScheduler(t)
+	if got := mustClaim(t, s); got.ID != seed {
+		t.Fatalf("seed claim = %s, want %s", got.ID, seed)
+	}
+
+	thinking := mustEnqueue(t, client.ID, normal.ID, "thinking", uniqueName("k"))
+	instruct := mustEnqueue(t, client.ID, normal.ID, "instruct", uniqueName("k"))
+	backdateTask(t, thinking, 1)
+	got := mustClaim(t, s)
+	if got.ID != instruct {
+		t.Fatalf("preferred claim = %s, want newer same-cohort instruct task %s", got.ID, instruct)
+	}
+}
+
+func TestStrictlyHigherPriorityBeatsAffinityPreference(t *testing.T) {
+	clearQueued(t)
+	client := mustClient(t, "affinity-priority-client")
+	batch := mustPolicy(t, "affinity-priority-batch", "batch", 3)
+	high := mustPolicy(t, "affinity-priority-high", "high", 3)
+	mustGrant(t, client.ID, batch.ID)
+	mustGrant(t, client.ID, high.ID)
+
+	seed := mustEnqueue(t, client.ID, batch.ID, "instruct", uniqueName("k"))
+	_, s := newScheduler(t)
+	if got := mustClaim(t, s); got.ID != seed {
+		t.Fatalf("seed claim = %s, want %s", got.ID, seed)
+	}
+	higher := mustEnqueue(t, client.ID, high.ID, "thinking", uniqueName("k"))
+	preferredButLower := mustEnqueue(t, client.ID, batch.ID, "instruct", uniqueName("k"))
+	got := mustClaim(t, s)
+	if got.ID != higher {
+		t.Fatalf("claim = %s, want higher-priority task %s; preferred lower task was %s", got.ID, higher, preferredButLower)
+	}
+}
+
+func TestAbsentPreferenceFallsBackToFIFO(t *testing.T) {
+	clearQueued(t)
+	client := mustClient(t, "fifo-preference-client")
+	policy := mustPolicy(t, "fifo-preference-policy", "normal", 3)
+	mustGrant(t, client.ID, policy.ID)
+	first := mustEnqueue(t, client.ID, policy.ID, "thinking", uniqueName("k"))
+	second := mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
+	_, s := newScheduler(t)
+	got := mustClaim(t, s)
+	if got.ID != first {
+		t.Fatalf("without an active preference claim = %s, want FIFO task %s (second was %s)", got.ID, first, second)
+	}
+}
+
+func TestBatchSizeDisablesPreferenceAndPreservesFIFO(t *testing.T) {
+	clearQueued(t)
+	client := mustClient(t, "batch-size-args-client")
+	policy := mustPolicy(t, "batch-size-args-policy", "normal", 3)
+	mustGrant(t, client.ID, policy.ID)
+	seed := mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
+	_, s := newScheduler(t)
+	s.policy.BatchSize = 1
+	if got := mustClaim(t, s); got.ID != seed {
+		t.Fatalf("seed claim = %s, want %s", got.ID, seed)
+	}
+	thinking := mustEnqueue(t, client.ID, policy.ID, "thinking", uniqueName("k"))
+	instruct := mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
+	backdateTask(t, thinking, 1)
+	got := mustClaim(t, s)
+	if got.ID != thinking {
+		t.Fatalf("size-exhausted affinity claim = %s, want FIFO task %s (instruct %s)", got.ID, thinking, instruct)
+	}
+}
+
+func TestBatchAgeDisablesPreferenceAndPreservesFIFO(t *testing.T) {
+	clearQueued(t)
+	client := mustClient(t, "batch-age-args-client")
+	policy := mustPolicy(t, "batch-age-args-policy", "normal", 3)
+	mustGrant(t, client.ID, policy.ID)
+	seed := mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
+	_, s := newScheduler(t)
+	s.policy.BatchMaxAge = time.Second
+	if got := mustClaim(t, s); got.ID != seed {
+		t.Fatalf("seed claim = %s, want %s", got.ID, seed)
+	}
+	thinking := mustEnqueue(t, client.ID, policy.ID, "thinking", uniqueName("k"))
+	instruct := mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
+	backdateTask(t, thinking, 1)
+	createdNow := time.Now()
+	s.now = func() time.Time { return createdNow.Add(2 * time.Second) }
+	got := mustClaim(t, s)
+	if got.ID != thinking {
+		t.Fatalf("age-expired affinity claim = %s, want FIFO task %s (instruct %s)", got.ID, thinking, instruct)
+	}
+}
+
+func TestRetryEligibilityExcludesFutureAndAllowsDueTask(t *testing.T) {
+	clearQueued(t)
+	client := mustClient(t, "retry-eligibility-client")
+	policy := mustPolicy(t, "retry-eligibility-policy", "normal", 3)
+	mustGrant(t, client.ID, policy.ID)
+	future := mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
+	ready := mustEnqueue(t, client.ID, policy.ID, "instruct", uniqueName("k"))
+	if _, err := adminDB.ExecContext(context.Background(),
+		"UPDATE tasks SET retry_available_at = now() + interval '1 hour' WHERE id = $1", future); err != nil {
+		t.Fatalf("set future retry time: %v", err)
+	}
+	_, s := newScheduler(t)
+	if got := mustClaim(t, s); got.ID != ready {
+		t.Fatalf("due claim = %s, want ready task %s", got.ID, ready)
+	}
+	res, err := s.ClaimNext(context.Background())
+	if err != nil {
+		t.Fatalf("future retry claim: %v", err)
+	}
+	if !res.NoTask {
+		t.Fatalf("future retry task %s was claimed before retry_available_at", res.Task.ID)
+	}
+	if _, err := adminDB.ExecContext(context.Background(),
+		"UPDATE tasks SET retry_available_at = now() - interval '1 second' WHERE id = $1", future); err != nil {
+		t.Fatalf("make retry due: %v", err)
+	}
+	if got := mustClaim(t, s); got.ID != future {
+		t.Fatalf("due retry claim = %s, want %s", got.ID, future)
 	}
 }
 

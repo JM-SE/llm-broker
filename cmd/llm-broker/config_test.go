@@ -19,13 +19,13 @@ func writeTempConfig(t *testing.T, content string) string {
 }
 
 const testValidConfig = `{
-	"version": 1,
+	"version": 2,
 	"api": {"listen": "127.0.0.1:8010"},
-	"database": {"url_env": "LLM_BROKER_DATABASE_URL"},
+	"database": {"url_env": "LLM_BROKER_DATABASE_URL", "provisioner_url_env": "LLM_BROKER_PROVISIONER_URL", "migration_url_env": "LLM_BROKER_MIGRATION_URL"},
 	"retention": {"payload": "1h", "result": "168h", "metadata": "720h"},
 	"backends": {"fake": {"type": "fake"}},
 	"capabilities": {"instruct": {"backend": "fake"}},
-	"workloads": {"default": {"priority_class": "normal"}}
+	"workloads": {"default": {"priority_class": "normal", "allowed_capabilities": ["instruct"], "workload_timeout_seconds": 300}}
 }`
 
 func TestConfigValidateOK(t *testing.T) {
@@ -75,15 +75,15 @@ func TestConfigValidateEnvFallback(t *testing.T) {
 
 func TestConfigShowRedacted(t *testing.T) {
 	path := writeTempConfig(t, `{
-		"version": 1,
+		"version": 2,
 		"api": {"listen": "127.0.0.1:8010"},
-		"database": {"url_env": "LLM_BROKER_DATABASE_URL"},
+		"database": {"url_env": "LLM_BROKER_DATABASE_URL", "provisioner_url_env": "LLM_BROKER_PROVISIONER_URL", "migration_url_env": "LLM_BROKER_MIGRATION_URL"},
 		"retention": {"payload": "1h", "result": "168h", "metadata": "720h"},
 		"backends": {
 			"primary": {"type": "openai_compatible", "base_url": "http://llm-runtime.example:8080/v1", "model": "alias", "credential_env": "LLM_BACKEND_API_KEY"}
 		},
 		"capabilities": {"instruct": {"backend": "primary"}},
-		"workloads": {"default": {"priority_class": "normal"}}
+		"workloads": {"default": {"priority_class": "normal", "allowed_capabilities": ["instruct"], "workload_timeout_seconds": 300}}
 	}`)
 	var stdout, stderr bytes.Buffer
 	code := run(context.Background(), []string{"llm-broker", "config", "show", path}, &stdout, &stderr)

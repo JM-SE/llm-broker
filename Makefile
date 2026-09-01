@@ -1,4 +1,4 @@
-.PHONY: build test test-race vet fmt check clean release checksums image
+.PHONY: build test test-race vet fmt fmt-check scan check clean release checksums image
 
 GO      ?= go
 ARGS    ?=
@@ -11,13 +11,13 @@ LDFLAGS := -s -w \
 	-X github.com/JM-SE/llm-broker/internal/version.BuildTime=$(BUILDTIME)
 
 build:
-	$(GO) build $(ARGS) ./cmd/llm-broker
+	$(GO) build $(ARGS) ./...
 
 test:
-	$(GO) test $(ARGS) ./...
+	$(GO) test -count=1 -p=1 $(ARGS) ./...
 
 test-race:
-	$(GO) test -race $(ARGS) ./...
+	$(GO) test -count=1 -race -p=1 $(ARGS) ./...
 
 vet:
 	$(GO) vet ./...
@@ -25,8 +25,23 @@ vet:
 fmt:
 	$(GO) fmt ./...
 
-check: fmt test-race vet
-	$(GO) build ./cmd/llm-broker
+fmt-check:
+	@files="$$(gofmt -l $$(git ls-files '*.go' --cached --others --exclude-standard))"; \
+	if [ -n "$$files" ]; then printf '%s\n' "$$files"; exit 1; fi
+
+scan:
+	./scripts/h00-scan-contract-test.sh
+	./scripts/h00-evidence-preflight-contract-test.sh
+	./scripts/check-h00-boundaries.sh
+
+
+# The acceptance check is intentionally non-skipping: callers must provide the
+# three disposable PostgreSQL role URLs and the harnesses must execute.
+check: fmt-check vet scan
+	LLM_BROKER_REQUIRE_TEST_DATABASE=1 $(GO) test -count=1 -race -p=1 $(ARGS) ./...
+	$(GO) build ./...
+	$(GO) mod verify
+	git diff --check
 
 clean:
 	rm -f llm-broker

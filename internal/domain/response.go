@@ -58,6 +58,17 @@ func NewSchemaContract(raw []byte) (*SchemaContract, error) {
 	return &SchemaContract{raw: canonical}, nil
 }
 
+// UnmarshalJSON validates and canonicalizes a client-provided JSON Schema at
+// every JSON boundary, including API ingress and persisted task payloads.
+func (s *SchemaContract) UnmarshalJSON(data []byte) error {
+	contract, err := NewSchemaContract(data)
+	if err != nil {
+		return err
+	}
+	*s = *contract
+	return nil
+}
+
 // Raw returns the canonicalized schema bytes.
 func (s *SchemaContract) Raw() []byte { return s.raw }
 
@@ -223,8 +234,8 @@ func (r ResponseContract) Validate() error {
 // Canonical renders deterministic JSON bytes of the response contract.
 func (r *ResponseContract) Canonical() ([]byte, error) {
 	canon := struct {
-		Kind   ResponseKind `json:"kind"`
-		Schema []byte       `json:"schema,omitempty"`
+		Kind   ResponseKind    `json:"kind"`
+		Schema json.RawMessage `json:"schema,omitempty"`
 	}{Kind: r.Kind}
 	if r.Schema != nil {
 		canon.Schema = r.Schema.Canonical()

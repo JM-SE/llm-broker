@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"time"
+
+	"github.com/JM-SE/llm-broker/internal/store/postgres"
 )
 
 // handleHealth is process liveness only: no dependency checks.
@@ -26,6 +28,16 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.CheckSchemaCompatible(r.Context()); err != nil {
 		fail("database schema version mismatch")
+		return
+	}
+	digest := s.cfg.TopologyDigest()
+	configured := make([]postgres.ConfiguredWorkloadTopology, 0, len(s.cfg.Workloads))
+	for slug := range s.cfg.Workloads {
+		configured = append(configured, postgres.ConfiguredWorkloadTopology{Slug: slug, Digest: digest})
+	}
+	if err := s.store.CheckConfiguredTopology(r.Context(), configured); err != nil {
+		s.log.Error("readiness topology check failed", "request_id", requestIDFrom(r.Context()), "error", err)
+		fail("configured policy topology is not coherent")
 		return
 	}
 	workers, err := s.store.ListActiveWorkers(r.Context(), 30*time.Second)

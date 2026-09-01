@@ -25,13 +25,24 @@ import (
 
 // newAPIServer builds the full API stack over the runtime store with an
 // in-memory config and returns the test server plus the config used.
-func newAPIServer(t *testing.T, capabilities map[string]config.Capability, backends map[string]config.BackendConfig) *httptest.Server {
+func newAPIServer(t *testing.T, workload string, capabilities map[string]config.Capability, backends map[string]config.BackendConfig) *httptest.Server {
 	t.Helper()
 	cfg := &config.Config{
-		Version:      1,
+		Version:      2,
 		API:          config.APIConfig{Listen: "127.0.0.1:0", BodyLimitBytes: 524288},
 		Capabilities: capabilities,
 		Backends:     backends,
+		Workloads: map[string]config.WorkloadPolicy{
+			workload: {
+				PriorityClass:          "normal",
+				MaxActiveTasks:         250,
+				MaxAttempts:            3,
+				RetryDelaysSeconds:     []int{1, 5},
+				MaxOutputTokens:        2048,
+				AllowedCapabilities:    []string{"instruct"},
+				WorkloadTimeoutSeconds: 300,
+			},
+		},
 	}
 	verifier := auth.NewVerifier(func(ctx context.Context, identifier string) (auth.Identity, []byte, bool, error) {
 		c, err := rtStore.GetClientByIdentifier(ctx, identifier)
@@ -56,7 +67,7 @@ func apiClient(t *testing.T, workload string) (auth.Token, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := rtStore.CreateClient(context.Background(), postgres.CreateClientParams{
+	c, err := adminStore.CreateClient(context.Background(), postgres.CreateClientParams{
 		Name:                 uniqueName("e2eclient"),
 		CredentialIdentifier: tok.Identifier,
 		CredentialDigest:     tok.Digest[:],
@@ -103,7 +114,7 @@ func TestE2EAPIWorkerFake(t *testing.T) {
 
 	capabilities := map[string]config.Capability{"instruct": {Backend: "fake"}}
 	backends := map[string]config.BackendConfig{"fake": {Type: config.AdapterFake}}
-	ts := newAPIServer(t, capabilities, backends)
+	ts := newAPIServer(t, policy.Name, capabilities, backends)
 
 	w, _, _ := newWorkerEnv(t, "none", 0)
 	startWorker(t, w)
@@ -153,12 +164,6 @@ func TestE2ENoOverlappingInference(t *testing.T) {
 	}))
 	t.Cleanup(backendSrv.Close)
 
-	policy := mustPolicy(t, "e2e-nolap", 3, nil)
-	client := mustClient(t)
-	mustGrant(t, client.ID, policy.ID)
-	payload := payloadFor(t, policy.Name, "instruct",
-		[]domain.Message{{Role: domain.RoleUser, Content: "hello"}}, textResponse)
-
 	capabilities := map[string]config.Capability{"instruct": {Backend: "oc"}}
 	backends := map[string]config.BackendConfig{"oc": {
 		Type:          config.AdapterOpenAICompatible,
@@ -166,6 +171,16 @@ func TestE2ENoOverlappingInference(t *testing.T) {
 		Model:         "operator-model-alias",
 		CredentialEnv: "LLM_BROKER_TEST_BACKEND_KEY",
 	}}
+	topologyDigest := (&config.Config{
+		Version:      2,
+		Capabilities: capabilities,
+		Backends:     backends,
+	}).TopologyDigest()
+	policy := mustPolicyWithDigest(t, "e2e-nolap", 3, nil, topologyDigest)
+	client := mustClient(t)
+	mustGrant(t, client.ID, policy.ID)
+	payload := payloadFor(t, policy.Name, "instruct",
+		[]domain.Message{{Role: domain.RoleUser, Content: "hello"}}, textResponse)
 
 	mkWorker := func() *Worker {
 		policy := scheduler.DefaultPolicy()
@@ -173,14 +188,15 @@ func TestE2ENoOverlappingInference(t *testing.T) {
 		leader := scheduler.NewLeader(rtStore, uuid.New(), policy.HeartbeatInterval, nil)
 		sched := scheduler.New(rtStore, policy, leader)
 		return New(Options{
-			Store:        rtStore,
-			Scheduler:    sched,
-			Leader:       leader,
-			Registry:     backend.DefaultRegistry,
-			Capabilities: capabilities,
-			Backends:     backends,
-			Policy:       policy,
-			ClaimPoll:    50 * time.Millisecond,
+			Store:               rtStore,
+			Scheduler:           sched,
+			Leader:              leader,
+			Registry:            backend.DefaultRegistry,
+			Capabilities:        capabilities,
+			Backends:            backends,
+			ConfiguredWorkloads: testConfiguredWorkloads,
+			Policy:              policy,
+			ClaimPoll:           50 * time.Millisecond,
 		})
 	}
 	w1 := mkWorker()

@@ -51,7 +51,7 @@ credential ever appears in logs or metrics.
 
 | Threat | Mitigation |
 | --- | --- |
-| Credential theft (DB leak) | only SHA-256 digests stored; tokens shown once |
+| Credential theft (DB leak) | only SHA-256 digests stored; plaintext tokens are written only to mode-0600 files |
 | Token replay | bearer tokens; disable/revoke takes effect immediately |
 | Client impersonation | constant-time verification; disabled == invalid (no side channel) |
 | Cross-client task access | every query scoped by client in SQL; 404 for foreign tasks |

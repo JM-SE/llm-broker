@@ -9,27 +9,95 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: llm_broker_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d llm_broker_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5432/llm_broker_test?sslmode=disable
+      TEST_DATABASE_PROVISIONER_URL: postgres://llm_broker_provisioner@127.0.0.1:5432/llm_broker_test?sslmode=disable
+      TEST_DATABASE_RUNTIME_URL: postgres://llm_broker_runtime@127.0.0.1:5432/llm_broker_test?sslmode=disable
+      LLM_BROKER_REQUIRE_TEST_DATABASE: "1"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
           check-latest: true
-      - name: format
-        run: diff -u <(echo -n) <(gofmt -d .)
-      - name: test
-        # -p 1 serializes package test binaries: the PostgreSQL integration
-        # harnesses share one disposable database and reset its schema per
-        # package, so parallel package execution would race.
-        run: go test -race -p 1 ./...
-      - name: vet
-        run: go vet ./...
-      - name: build
-        run: go build ./cmd/llm-broker
-      - name: mod verify
-        run: go mod verify
+      - name: materialize frozen H00 scan inventories
+        run: |
+          set -euo pipefail
+          inventory_dir="$RUNNER_TEMP/h00-inventories"
+          mkdir -p "$inventory_dir"
+          : >"$inventory_dir/concrete-integration-names.txt"
+          : >"$inventory_dir/private-path-prefixes.txt"
+          chmod 600 "$inventory_dir"/*.txt
+          {
+            printf 'H00_CONCRETE_INTEGRATION_NAMES_FILE=%s\n' "$inventory_dir/concrete-integration-names.txt"
+            printf 'H00_PRIVATE_PATH_PREFIXES_FILE=%s\n' "$inventory_dir/private-path-prefixes.txt"
+          } >>"$GITHUB_ENV"
+      - name: initialize sanitized H00 evidence
+        run: |
+          mkdir -p h00-ci-evidence
+          {
+            printf 'candidate_sha='; git rev-parse HEAD
+            printf 'tree_sha='; git rev-parse 'HEAD^{tree}'
+            printf 'created_utc='; date -u +%Y-%m-%dT%H:%M:%SZ
+            printf 'go_version='; go version
+          } > h00-ci-evidence/candidate.txt
+      - name: prepare database roles
+        run: |
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -d llm_broker_test \
+            -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE llm_broker_provisioner LOGIN; CREATE ROLE llm_broker_runtime LOGIN; ALTER ROLE llm_broker_provisioner SET search_path = public; ALTER ROLE llm_broker_runtime SET search_path = public;"
+      - name: probe database roles
+        run: |
+          set -euo pipefail
+          probe() {
+            local label="$1" url="$2" expected="$3" actual
+            actual="$(psql "$url" -XAtqc 'select current_user')"
+            test "$actual" = "$expected"
+            printf '%s -> %s: PASS\n' "$label" "$expected"
+          }
+          {
+            probe TEST_DATABASE_URL "$TEST_DATABASE_URL" postgres
+            probe TEST_DATABASE_PROVISIONER_URL "$TEST_DATABASE_PROVISIONER_URL" llm_broker_provisioner
+            probe TEST_DATABASE_RUNTIME_URL "$TEST_DATABASE_RUNTIME_URL" llm_broker_runtime
+          } > h00-ci-evidence/role-map.txt
+      - name: required H00 gates
+        run: |
+          set -o pipefail
+          make check 2>&1 | tee h00-ci-evidence/make-check.log
       - name: vulnerability scan
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: |
+          set -o pipefail
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./... 2>&1 | tee h00-ci-evidence/vulnerability.log
+      - name: scan captured CI evidence
+        run: |
+          set -euo pipefail
+          canary="$RUNNER_TEMP/h00-dynamic-canary.txt"
+          : >"$canary"
+          chmod 600 "$canary"
+          scripts/check-h00-artifacts.sh --payload h00-ci-evidence --canary "$canary" \
+            --manifest h00-ci-evidence/scan-manifest.txt \
+            > h00-ci-evidence/scan.stdout 2> h00-ci-evidence/scan.stderr
+      - name: upload sanitized H00 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h00-ci-evidence-${{ github.sha }}
+          path: h00-ci-evidence
+          if-no-files-found: error
+          retention-days: 14
 
   container:
     runs-on: ubuntu-latest

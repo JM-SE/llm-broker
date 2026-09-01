@@ -35,7 +35,8 @@ func (s *Store) SaveResult(ctx context.Context, taskID uuid.UUID, content, finis
 }
 
 // MarkAttemptFailed records the sanitized outcome of a failed attempt: the
-// error class and stable code, never raw provider bodies.
+// error class and stable code, never raw provider bodies. Worker execution
+// calls it only after the authorized boundary.
 func (s *Store) MarkAttemptFailed(ctx context.Context, taskID uuid.UUID, attempt int, class, code string) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE task_attempts

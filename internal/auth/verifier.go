@@ -10,6 +10,10 @@ import (
 type Identity struct {
 	ClientID int64
 	Name     string
+	// DigestProof is derived from the presented credential. It is deliberately
+	// not the credential itself and is safe to carry across the API/store
+	// boundary for the post-lock recheck.
+	DigestProof [32]byte
 }
 
 // LookupFunc resolves a token identifier to the stored digest, the enabled
@@ -53,5 +57,6 @@ func (v *Verifier) Verify(ctx context.Context, value string) (Identity, error) {
 	if !enabled || subtle.ConstantTimeCompare(provided[:], digest) != 1 {
 		return Identity{}, ErrInvalidToken
 	}
+	ident.DigestProof = provided
 	return ident, nil
 }

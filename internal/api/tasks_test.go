@@ -13,8 +13,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/JM-SE/llm-broker/internal/config"
 	"github.com/JM-SE/llm-broker/internal/domain"
 	"github.com/JM-SE/llm-broker/internal/store/postgres"
+	"github.com/JM-SE/llm-broker/internal/testsupport"
 )
 
 const key1 = "idem-key-0001"
@@ -186,7 +188,7 @@ func TestCreateTaskAuthorization(t *testing.T) {
 	})
 	t.Run("not granted", func(t *testing.T) {
 		other := uniqueName("otherwl")
-		adminStore.UpsertWorkloadPolicy(context.Background(), postgres.WorkloadPolicy{
+		testsupport.ApplyPolicy(context.Background(), adminStore, postgres.WorkloadPolicy{
 			Name: other, PriorityClass: "normal", MaxActiveTasks: 10, MaxAttempts: 3,
 			RetryDelaysSeconds:     []int{1, 5},
 			WorkloadTimeoutSeconds: 300, MaxOutputTokens: 2048, AllowedGeneration: []byte("{}"),
@@ -203,8 +205,8 @@ func TestCreateTaskAuthorization(t *testing.T) {
 			"messages": [{"role": "user", "content": "hi"}],
 			"response": {"kind": "text"}}`, wl)
 		resp, b := doReq(t, env.ts, http.MethodPost, "/v1/tasks", tok.Value, "authz-key-03", "", body)
-		if resp.StatusCode != http.StatusUnprocessableEntity {
-			t.Errorf("status = %d, want 422", resp.StatusCode)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", resp.StatusCode)
 		}
 		_ = b
 	})
@@ -266,7 +268,8 @@ func TestCreateTaskGenerationPolicy(t *testing.T) {
 	env := newTestEnv(t)
 	tok, clientID := newClient(t, "genpolicy")
 	name := uniqueName("genwl")
-	adminStore.UpsertWorkloadPolicy(context.Background(), postgres.WorkloadPolicy{
+	digest := testConfig().TopologyDigest()
+	testsupport.ApplyPolicy(context.Background(), adminStore, postgres.WorkloadPolicy{
 		Name: name, PriorityClass: "normal", MaxActiveTasks: 10, MaxAttempts: 3,
 		RetryDelaysSeconds:     []int{1, 5},
 		WorkloadTimeoutSeconds: 300, MaxOutputTokens: 2048,
@@ -275,9 +278,20 @@ func TestCreateTaskGenerationPolicy(t *testing.T) {
 		PayloadRetentionSeconds:  3600,
 		ResultRetentionSeconds:   86400,
 		MetadataRetentionSeconds: 2592000,
+		AllowedCapabilities:      []string{"instruct"},
+		TopologyDigest:           digest[:],
 	})
 	pol, _ := adminStore.GetWorkloadPolicyByName(context.Background(), name)
-	adminStore.GrantWorkload(context.Background(), clientID, pol.ID)
+	adminStore.GrantWorkloadBySlug(context.Background(), clientID, pol.Name)
+	testWorkloads[name] = config.WorkloadPolicy{
+		PriorityClass:          "normal",
+		MaxActiveTasks:         10,
+		MaxAttempts:            3,
+		RetryDelaysSeconds:     []int{1, 5},
+		MaxOutputTokens:        2048,
+		AllowedCapabilities:    []string{"instruct"},
+		WorkloadTimeoutSeconds: 300,
+	}
 
 	over := fmt.Sprintf(`{"workload": %q, "capability": "instruct",
 		"messages": [{"role": "user", "content": "hi"}],
@@ -402,7 +416,7 @@ func TestResultStatuses(t *testing.T) {
 	_, b = doReq(t, env.ts, http.MethodPost, "/v1/tasks", tok.Value, "res-key-expired", "", submission(wl))
 	expiredID, _ := uuid.Parse(taskID(t, b))
 	claimAndFinish(t, expiredID)
-	if _, err := adminStore.Pool().Exec(ctx,
+	if _, err := adminDB.ExecContext(ctx,
 		"DELETE FROM task_results WHERE task_id = $1", expiredID); err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +680,7 @@ func TestReadyFailsWithUnresolvedIndeterminate(t *testing.T) {
 
 	// Craft an unresolved ambiguous execution: a running task with an
 	// expired lease and an indeterminate last attempt.
-	if _, err := adminStore.Pool().Exec(context.Background(),
+	if _, err := adminDB.ExecContext(context.Background(),
 		`DELETE FROM tasks WHERE state = 'queued'`); err != nil {
 		t.Fatal(err)
 	}
@@ -677,23 +691,27 @@ func TestReadyFailsWithUnresolvedIndeterminate(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := []byte(`{"workload":"x","capability":"instruct","messages":[{"role":"user","content":"hi"}],"response":{"kind":"text"}}`)
-	res, err := adminStore.CreateTask(context.Background(), postgres.CreateTaskParams{
-		ClientID: clientID, WorkloadID: policy.ID,
-		Capability: "instruct", IdempotencyKey: "indeterminate-key-001",
-		RequestHash: make([]byte, 32), Payload: payload,
-	})
+	var taskID uuid.UUID
+	err = adminDB.QueryRowContext(context.Background(), `
+		INSERT INTO tasks (client_id, workload_id, capability, idempotency_key, request_hash)
+		VALUES ($1,$2,'instruct',$3,$4) RETURNING id`,
+		clientID, policy.ID, "indeterminate-key-001", make([]byte, 32)).Scan(&taskID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := adminStore.ClaimNextQueued(context.Background(), workerID, time.Minute)
-	if err != nil || claimed.ID != res.TaskID {
-		t.Fatalf("claim: %v (%s)", err, claimed.ID)
-	}
-	if _, err := adminStore.Pool().Exec(context.Background(),
-		`UPDATE tasks SET lease_until = now() - interval '1 minute' WHERE id = $1`, res.TaskID); err != nil {
+	if _, err := adminDB.ExecContext(context.Background(),
+		`INSERT INTO task_payloads (task_id, payload) VALUES ($1,$2)`, taskID, string(payload)); err != nil {
 		t.Fatal(err)
 	}
-	if err := adminStore.MarkAttemptFailed(context.Background(), res.TaskID, 1,
+	claimed, err := adminStore.ClaimNextQueued(context.Background(), workerID, time.Minute)
+	if err != nil || claimed.ID != taskID {
+		t.Fatalf("claim: %v (%s)", err, claimed.ID)
+	}
+	if _, err := adminDB.ExecContext(context.Background(),
+		`UPDATE tasks SET lease_until = now() - interval '1 minute' WHERE id = $1`, taskID); err != nil {
+		t.Fatal(err)
+	}
+	if err := adminStore.MarkAttemptFailed(context.Background(), taskID, 1,
 		"indeterminate", "request_interrupted"); err != nil {
 		t.Fatal(err)
 	}

@@ -3,17 +3,16 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
+	"github.com/JM-SE/llm-broker/internal/policy"
 	"github.com/JM-SE/llm-broker/migrations"
 )
 
@@ -21,15 +20,21 @@ import (
 // scripts/pg-test-up.sh and export the two URLs it prints. Without them every
 // test in this package is skipped (the package contains no unit-only tests).
 var (
-	adminStore *Store // owner/migration role (schema authority)
-	rtStore    *Store // least-privilege runtime role (DML only)
+	adminStore       *Store // owner/migration role (schema authority)
+	provisionerStore *Store // policy/client/grant provisioning role
+	rtStore          *Store // least-privilege runtime role (DML only)
 )
 
 func TestMain(m *testing.M) {
 	adminURL := os.Getenv("TEST_DATABASE_URL")
+	provisionerURL := os.Getenv("TEST_DATABASE_PROVISIONER_URL")
 	runtimeURL := os.Getenv("TEST_DATABASE_RUNTIME_URL")
-	if adminURL == "" || runtimeURL == "" {
-		fmt.Println("postgres integration tests skipped: set TEST_DATABASE_URL and TEST_DATABASE_RUNTIME_URL (see scripts/pg-test-up.sh)")
+	if adminURL == "" || provisionerURL == "" || runtimeURL == "" {
+		if os.Getenv("LLM_BROKER_REQUIRE_TEST_DATABASE") == "1" {
+			fmt.Println("postgres integration tests require TEST_DATABASE_URL, TEST_DATABASE_PROVISIONER_URL, and TEST_DATABASE_RUNTIME_URL")
+			os.Exit(1)
+		}
+		fmt.Println("postgres integration tests skipped: set TEST_DATABASE_URL, TEST_DATABASE_PROVISIONER_URL, and TEST_DATABASE_RUNTIME_URL (see scripts/pg-test-up.sh)")
 		os.Exit(0)
 	}
 
@@ -71,63 +76,20 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// Create (or reset) the least-privilege runtime role from the runtime URL.
-	runtimeUser, runtimePassword, err := credentialsFromURL(runtimeURL)
-	if err != nil {
-		fmt.Printf("integration setup: runtime URL: %v\n", err)
-		os.Exit(1)
-	}
-	roleIdent := pgx.Identifier{runtimeUser}.Sanitize()
-	var exists bool
-	if err := adminStore.pool.QueryRow(ctx,
-		"SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = $1)", runtimeUser).Scan(&exists); err != nil {
-		fmt.Printf("integration setup: check role: %v\n", err)
-		os.Exit(1)
-	}
-	if !exists {
-		if _, err := adminStore.pool.Exec(ctx,
-			fmt.Sprintf("CREATE ROLE %s LOGIN PASSWORD '%s'", roleIdent, runtimePassword)); err != nil {
-			fmt.Printf("integration setup: create runtime role: %v\n", err)
-			os.Exit(1)
-		}
-	}
-	if _, err := adminStore.pool.Exec(ctx, fmt.Sprintf(
-		"ALTER ROLE %s PASSWORD '%s'; ALTER ROLE %s SET search_path = public",
-		roleIdent, runtimePassword, roleIdent)); err != nil {
-		fmt.Printf("integration setup: configure runtime role: %v\n", err)
-		os.Exit(1)
-	}
-	grants := fmt.Sprintf(`
-		GRANT USAGE ON SCHEMA public TO %s;
-		GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %s;
-		GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %s;`,
-		roleIdent, roleIdent, roleIdent)
-	if _, err := adminStore.pool.Exec(ctx, grants); err != nil {
-		fmt.Printf("integration setup: grant runtime role: %v\n", err)
-		os.Exit(1)
-	}
-
 	rtStore, err = Open(ctx, runtimeURL, opts)
 	if err != nil {
 		fmt.Printf("integration setup: runtime connection: %v\n", err)
 		os.Exit(1)
 	}
 	defer rtStore.Close()
+	provisionerStore, err = Open(ctx, provisionerURL, opts)
+	if err != nil {
+		fmt.Printf("integration setup: provisioner connection: %v\n", err)
+		os.Exit(1)
+	}
+	defer provisionerStore.Close()
 
 	os.Exit(m.Run())
-}
-
-// credentialsFromURL extracts user and password from a connection URL.
-func credentialsFromURL(connURL string) (string, string, error) {
-	u, err := url.Parse(connURL)
-	if err != nil {
-		return "", "", err
-	}
-	if u.User == nil {
-		return "", "", fmt.Errorf("URL has no user info")
-	}
-	password, _ := u.User.Password()
-	return u.User.Username(), password, nil
 }
 
 // --- shared fixtures -------------------------------------------------------
@@ -148,6 +110,31 @@ func uniqueName(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, fixtureSeq.Add(1))
 }
 
+func applyPolicy(t *testing.T, s *Store, input WorkloadPolicy) WorkloadPolicy {
+	t.Helper()
+	var digest [32]byte
+	if len(input.TopologyDigest) == len(digest) {
+		copy(digest[:], input.TopologyDigest)
+	}
+	_, err := s.ApplyPolicies(context.Background(), []policy.Workload{{
+		Name: input.Name, PriorityClass: input.PriorityClass, MaxActiveTasks: input.MaxActiveTasks,
+		MaxAttempts: input.MaxAttempts, RetryDelaysSeconds: input.RetryDelaysSeconds,
+		MaxOutputTokens: input.MaxOutputTokens, AllowedGeneration: input.AllowedGeneration,
+		RequiredFeatures: input.RequiredFeatures, WorkloadTimeoutSeconds: input.WorkloadTimeoutSeconds,
+		PayloadRetentionSeconds: input.PayloadRetentionSeconds, ResultRetentionSeconds: input.ResultRetentionSeconds,
+		MetadataRetentionSeconds: input.MetadataRetentionSeconds, AllowedCapabilities: input.AllowedCapabilities,
+		TopologyDigest: digest,
+	}})
+	if err != nil {
+		t.Fatalf("apply policy %s: %v", input.Name, err)
+	}
+	p, err := s.GetWorkloadPolicyByName(context.Background(), input.Name)
+	if err != nil {
+		t.Fatalf("read applied policy %s: %v", input.Name, err)
+	}
+	return p
+}
+
 func mustCreateClient(t *testing.T, s *Store, name string) Client {
 	t.Helper()
 	// The identifier mirrors the auth contract (12-char lookup prefix).
@@ -166,7 +153,7 @@ func mustCreateClient(t *testing.T, s *Store, name string) Client {
 
 func mustUpsertPolicy(t *testing.T, s *Store, name string) WorkloadPolicy {
 	t.Helper()
-	p, err := s.UpsertWorkloadPolicy(context.Background(), WorkloadPolicy{
+	input := WorkloadPolicy{
 		Name:                     uniqueName(name),
 		PriorityClass:            "normal",
 		MaxActiveTasks:           250,
@@ -179,16 +166,13 @@ func mustUpsertPolicy(t *testing.T, s *Store, name string) WorkloadPolicy {
 		PayloadRetentionSeconds:  3600,
 		ResultRetentionSeconds:   86400,
 		MetadataRetentionSeconds: 2592000,
-	})
-	if err != nil {
-		t.Fatalf("upsert policy %s: %v", name, err)
 	}
-	return p
+	return applyPolicy(t, s, input)
 }
 
 func mustCreateTask(t *testing.T, s *Store, clientID, workloadID int64, key string, hash []byte) CreateTaskResult {
 	t.Helper()
-	res, err := s.CreateTask(context.Background(), CreateTaskParams{
+	res, err := s.createTaskFixture(context.Background(), CreateTaskParams{
 		ClientID:       clientID,
 		WorkloadID:     workloadID,
 		Capability:     "instruct",

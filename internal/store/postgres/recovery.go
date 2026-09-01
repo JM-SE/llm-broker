@@ -8,51 +8,59 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/JM-SE/llm-broker/internal/domain"
 )
 
-// RecoveryItem describes one task that requires operator attention: a
-// running task whose lease has expired and whose last attempt ended in an
-// indeterminate outcome. Fields are sanitized operational metadata only.
+// RecoveryItem describes one running task whose latest attempt needs recovery.
+// A claimed phase is definitely unsent and safe to requeue; an authorized
+// phase (including a converted legacy attempt) is ambiguous and remains on
+// the operator-recovery path.
 type RecoveryItem struct {
-	Task         Task
-	ErrorClass   string
-	ErrorCode    string
-	AttemptNo    int
-	LeaseExpired bool
+	Task          Task
+	ErrorClass    string
+	ErrorCode     string
+	AttemptNo     int
+	Phase         string
+	SafeToRequeue bool
+	LeaseExpired  bool
 }
 
-// HasUnresolvedIndeterminate reports whether any task is in the ambiguous
-// state that blocks all new inference: a running task whose last attempt was
-// classified as indeterminate. Once the worker records an indeterminate
-// outcome the execution is over (only its outcome is unknown), so blocking
-// does not wait for the lease to expire. The worker refuses to claim while
-// this is true; only the operator CLI can resolve it.
+// HasUnresolvedIndeterminate reports whether any task is in an ambiguous state
+// that blocks all new inference: a latest indeterminate attempt, or an
+// expired authorized attempt. Once an indeterminate outcome is recorded the
+// execution is over (only its outcome is unknown), so that case does not wait
+// for lease expiry. Authorized expiry is conservatively operator-recoverable.
 func (s *Store) HasUnresolvedIndeterminate(ctx context.Context) (bool, error) {
 	var exists bool
 	err := s.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM tasks t
-			WHERE t.state = 'running'
-			  AND EXISTS (
-				SELECT 1
+			JOIN LATERAL (
+				SELECT state, error_class
 				FROM task_attempts a
 				WHERE a.task_id = t.id
-				  AND a.state = 'failed'
-				  AND a.error_class = 'indeterminate'
-			  )
-		)`).Scan(&exists)
+				ORDER BY attempt DESC
+				LIMIT 1
+			) la ON true
+			WHERE t.state = 'running'
+			  AND ((la.state = 'failed' AND la.error_class = 'indeterminate')
+			       OR (la.state = 'authorized' AND t.lease_until <= now()))
+			)`).Scan(&exists)
 	return exists, err
 }
 
-// ListUnresolvedRecovery returns every task in the ambiguous state with its
-// last attempt classification, newest first. Empty when there is nothing to
-// resolve.
+// ListUnresolvedRecovery returns expired claimed and authorized attempts plus
+// indeterminate attempts. It intentionally uses the latest attempt only, so a
+// prior failed attempt cannot keep a newer safe/authorized attempt hidden.
 func (s *Store) ListUnresolvedRecovery(ctx context.Context) ([]RecoveryItem, error) {
 	q := `SELECT t.id, t.client_id, t.workload_id, t.capability, t.idempotency_key,
 		t.request_hash, t.state, t.attempts, t.lease_until, t.started_at,
 		t.finished_at, t.cancel_requested_at, t.retry_available_at,
-		t.created_at, t.updated_at, la.attempt, la.error_class, la.error_code
+		t.created_at, t.updated_at, la.attempt, la.state,
+		COALESCE(la.error_class, ''), COALESCE(la.error_code, ''),
+		(t.lease_until IS NOT NULL AND t.lease_until <= now())
 		FROM tasks t
 		JOIN LATERAL (
 			SELECT attempt, state, error_class, error_code
@@ -62,8 +70,8 @@ func (s *Store) ListUnresolvedRecovery(ctx context.Context) ([]RecoveryItem, err
 			LIMIT 1
 		) la ON true
 		WHERE t.state = 'running'
-		  AND la.state = 'failed'
-		  AND la.error_class = 'indeterminate'
+		  AND ((la.state = 'failed' AND la.error_class = 'indeterminate')
+		       OR (la.state IN ('claimed', 'authorized') AND t.lease_until <= now()))
 		ORDER BY t.updated_at DESC`
 	rows, err := s.pool.Query(ctx, q)
 	if err != nil {
@@ -78,11 +86,19 @@ func (s *Store) ListUnresolvedRecovery(ctx context.Context) ([]RecoveryItem, err
 			&t.IdempotencyKey, &t.RequestHash, &t.State, &t.Attempts,
 			&t.LeaseUntil, &t.StartedAt, &t.FinishedAt, &t.CancelRequestedAt,
 			&t.RetryAvailableAt, &t.CreatedAt, &t.UpdatedAt,
-			&it.AttemptNo, &it.ErrorClass, &it.ErrorCode); err != nil {
+			&it.AttemptNo, &it.Phase, &it.ErrorClass, &it.ErrorCode,
+			&it.LeaseExpired); err != nil {
 			return nil, err
 		}
+		it.SafeToRequeue = it.Phase == AttemptPhaseClaimed
+		if it.Phase == AttemptPhaseClaimed {
+			it.ErrorClass = string(domain.ErrorTransientUnsent)
+			it.ErrorCode = "lease_expired_safe_unsent"
+		} else if it.Phase == AttemptPhaseAuthorized {
+			it.ErrorClass = string(domain.ErrorIndeterminate)
+			it.ErrorCode = "authorized_expired"
+		}
 		it.Task = t
-		it.LeaseExpired = true
 		items = append(items, it)
 	}
 	return items, rows.Err()
@@ -104,19 +120,24 @@ func (s *Store) RequeueForRetry(ctx context.Context, taskID uuid.UUID, attempt i
 			    lease_until = NULL,
 			    cancel_requested_at = NULL,
 			    updated_at = now()
-			WHERE id = $1 AND state = 'running'
-			RETURNING `+taskColumns, taskID, availableAt)
+			WHERE id = $1 AND state = 'running' AND attempts = $3
+			RETURNING `+taskColumns, taskID, availableAt, attempt)
 		var err error
 		t, err = scanTask(row)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			UPDATE task_attempts
 			SET state = 'failed', error_class = $3, error_code = $4, finished_at = now()
-			WHERE task_id = $1 AND attempt = $2`,
-			taskID, attempt, class, code); err != nil {
+			WHERE task_id = $1 AND attempt = $2
+			  AND state IN ('claimed', 'authorized', 'failed')`,
+			taskID, attempt, class, code)
+		if err != nil {
 			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("%w: attempt %d is not recoverable", ErrInvalidTransition, attempt)
 		}
 		return nil
 	})
@@ -154,12 +175,16 @@ func (s *Store) FinishTaskSucceeded(ctx context.Context, taskID uuid.UUID, attem
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			UPDATE task_attempts
 			SET state = 'succeeded', finished_at = now()
-			WHERE task_id = $1 AND attempt = $2`,
-			taskID, attempt); err != nil {
+			WHERE task_id = $1 AND attempt = $2 AND state = 'authorized'`,
+			taskID, attempt)
+		if err != nil {
 			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("%w: attempt %d is not authorized", ErrInvalidTransition, attempt)
 		}
 		return nil
 	})

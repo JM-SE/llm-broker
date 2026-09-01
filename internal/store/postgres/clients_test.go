@@ -53,7 +53,7 @@ func TestClientCRUD(t *testing.T) {
 	}
 }
 
-func TestWorkloadPolicyUpsert(t *testing.T) {
+func TestWorkloadPolicyApply(t *testing.T) {
 	ctx := context.Background()
 	policy := mustUpsertPolicy(t, adminStore, "upsert-workload")
 	got, err := adminStore.GetWorkloadPolicyByName(ctx, policy.Name)
@@ -64,18 +64,15 @@ func TestWorkloadPolicyUpsert(t *testing.T) {
 		t.Errorf("policy mismatch: %+v", got)
 	}
 
-	// Upserting the same name replaces the policy (same row id).
+	// Applying the same name replaces the policy (same row id).
 	got.PriorityClass = "high"
 	got.MaxOutputTokens = 4096
-	updated, err := adminStore.UpsertWorkloadPolicy(ctx, got)
-	if err != nil {
-		t.Fatalf("upsert update: %v", err)
-	}
+	updated := applyPolicy(t, adminStore, got)
 	if updated.ID != policy.ID {
-		t.Errorf("upsert changed id: %d -> %d", policy.ID, updated.ID)
+		t.Errorf("apply changed id: %d -> %d", policy.ID, updated.ID)
 	}
 	if updated.PriorityClass != "high" || updated.MaxOutputTokens != 4096 {
-		t.Errorf("upsert did not apply changes: %+v", updated)
+		t.Errorf("apply did not apply changes: %+v", updated)
 	}
 }
 
@@ -92,11 +89,11 @@ func TestWorkloadGrants(t *testing.T) {
 		t.Fatal("grant present before GrantWorkload")
 	}
 
-	if err := adminStore.GrantWorkload(ctx, client.ID, policy.ID); err != nil {
+	if err := adminStore.GrantWorkloadBySlug(ctx, client.ID, policy.Name); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
 	// Granting twice is idempotent.
-	if err := adminStore.GrantWorkload(ctx, client.ID, policy.ID); err != nil {
+	if err := adminStore.GrantWorkloadBySlug(ctx, client.ID, policy.Name); err != nil {
 		t.Fatalf("grant again: %v", err)
 	}
 	has, err = adminStore.ClientHasWorkload(ctx, client.ID, policy.ID)
@@ -107,7 +104,7 @@ func TestWorkloadGrants(t *testing.T) {
 		t.Fatal("grant not visible")
 	}
 
-	if err := adminStore.RevokeWorkload(ctx, client.ID, policy.ID); err != nil {
+	if err := adminStore.RevokeWorkloadBySlug(ctx, client.ID, policy.Name); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	has, err = adminStore.ClientHasWorkload(ctx, client.ID, policy.ID)

@@ -17,7 +17,7 @@ from the same commit (`make release`, `make image`).
 ## Release Checklist
 
 - [ ] `make check` green from a clean checkout.
-- [ ] `go test -race -p 1 ./...` green against a disposable PostgreSQL
+- [ ] `go test -count=1 -race -p=1 ./...` green against a disposable PostgreSQL
       (`scripts/pg-test-up.sh`; always `-p 1` — integration packages share
       the disposable database).
 - [ ] Fuzz targets run: `FuzzDecodeTaskSubmission`, `FuzzNewSchemaContract`,
@@ -26,9 +26,19 @@ from the same commit (`make release`, `make image`).
 - [ ] Container builds and passes the fake-mode smoke test
       (`docker compose build` + docs/quickstart.md flow).
 - [ ] Restore rehearsal passes (`scripts/restore-rehearsal.sh`).
+- [ ] H00 rollout is rehearsed as planned downtime: stop old API/worker,
+      install configuration v2, run migration, `policy validate/diff/apply/status`,
+      then start worker and API. Mixed versions and a policy-less startup are
+      unsupported; migration `00004` is forward-only.
 - [ ] `make release` produced archives + `SHA256SUMS` for both platforms.
-- [ ] Product source scan: no integration-specific identifiers
-      (`grep -rInE "llama.?swap|qwen|ytpipe|/home/|0.0.0.0" internal/ cmd/`).
+- [ ] Product and captured-artifact scans pass through
+      `scripts/check-h00-boundaries.sh` and
+      `scripts/check-h00-artifacts.sh`, using the frozen H00 scope and
+      mode-0600 canary inventories.
+- [ ] For H00 closure, evidence is generated from one clean candidate commit;
+      retain the SHA/tree identity, CI artifact, Compose/restore/cleanup logs,
+      and final `SHA256SUMS` in the external project workspace before asking
+      for independent acceptance.
 - [ ] License text and notices shipped (LICENSE in archives and image).
 
 ## Dependency Inventory

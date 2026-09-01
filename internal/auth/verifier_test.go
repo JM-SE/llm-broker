@@ -98,6 +98,9 @@ func TestVerifyRoundTrip(t *testing.T) {
 	if got.ClientID != 7 || got.Name != "alice" {
 		t.Errorf("identity = %+v, want alice/7", got)
 	}
+	if got.DigestProof != tok.Digest {
+		t.Error("identity did not carry the presented credential digest proof")
+	}
 }
 
 func TestVerifyInvalidCases(t *testing.T) {

@@ -2,19 +2,18 @@ package scheduler
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
-	"net/url"
 	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
 	"github.com/JM-SE/llm-broker/internal/store/postgres"
+	"github.com/JM-SE/llm-broker/internal/testsupport"
 	"github.com/JM-SE/llm-broker/migrations"
 )
 
@@ -23,14 +22,20 @@ import (
 // this package is skipped.
 var (
 	adminStore *postgres.Store // schema authority (fixtures)
+	adminDB    *sql.DB
 	rtStore    *postgres.Store // least-privilege runtime role (claims)
 )
 
 func TestMain(m *testing.M) {
 	adminURL := os.Getenv("TEST_DATABASE_URL")
+	provisionerURL := os.Getenv("TEST_DATABASE_PROVISIONER_URL")
 	runtimeURL := os.Getenv("TEST_DATABASE_RUNTIME_URL")
-	if adminURL == "" || runtimeURL == "" {
-		fmt.Println("scheduler integration tests skipped: set TEST_DATABASE_URL and TEST_DATABASE_RUNTIME_URL (see scripts/pg-test-up.sh)")
+	if adminURL == "" || provisionerURL == "" || runtimeURL == "" {
+		if os.Getenv("LLM_BROKER_REQUIRE_TEST_DATABASE") == "1" {
+			fmt.Println("scheduler integration tests require TEST_DATABASE_URL, TEST_DATABASE_PROVISIONER_URL, and TEST_DATABASE_RUNTIME_URL")
+			os.Exit(1)
+		}
+		fmt.Println("scheduler integration tests skipped: set TEST_DATABASE_URL, TEST_DATABASE_PROVISIONER_URL, and TEST_DATABASE_RUNTIME_URL (see scripts/pg-test-up.sh)")
 		os.Exit(0)
 	}
 
@@ -45,13 +50,17 @@ func TestMain(m *testing.M) {
 	}
 	defer adminStore.Close()
 
-	if _, err := adminStore.Pool().Exec(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
+	adminDB, err = testsupport.OpenDatabase(adminURL)
+	if err != nil {
+		fmt.Printf("integration setup: admin SQL bridge: %v\n", err)
+		os.Exit(1)
+	}
+	if _, err := adminDB.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public"); err != nil {
 		fmt.Printf("integration setup: reset schema: %v\n", err)
 		os.Exit(1)
 	}
 
-	std := stdlib.OpenDBFromPool(adminStore.Pool())
-	provider, err := goose.NewProvider(goose.DialectPostgres, std, migrations.FS)
+	provider, err := goose.NewProvider(goose.DialectPostgres, adminDB, migrations.FS)
 	if err != nil {
 		fmt.Printf("integration setup: migration provider: %v\n", err)
 		os.Exit(1)
@@ -64,43 +73,11 @@ func TestMain(m *testing.M) {
 		fmt.Printf("integration setup: close provider: %v\n", err)
 		os.Exit(1)
 	}
-	if err := std.Close(); err != nil {
-		fmt.Printf("integration setup: close stdlib bridge: %v\n", err)
-		os.Exit(1)
-	}
-
-	runtimeUser, runtimePassword, err := credentialsFromURL(runtimeURL)
+	// Goose closes the database handle passed to the provider. Reopen the
+	// owner bridge for fixture-only DDL/DML after migrations complete.
+	adminDB, err = testsupport.OpenDatabase(adminURL)
 	if err != nil {
-		fmt.Printf("integration setup: runtime URL: %v\n", err)
-		os.Exit(1)
-	}
-	roleIdent := pgx.Identifier{runtimeUser}.Sanitize()
-	var exists bool
-	if err := adminStore.Pool().QueryRow(ctx,
-		"SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = $1)", runtimeUser).Scan(&exists); err != nil {
-		fmt.Printf("integration setup: check role: %v\n", err)
-		os.Exit(1)
-	}
-	if !exists {
-		if _, err := adminStore.Pool().Exec(ctx,
-			fmt.Sprintf("CREATE ROLE %s LOGIN PASSWORD '%s'", roleIdent, runtimePassword)); err != nil {
-			fmt.Printf("integration setup: create runtime role: %v\n", err)
-			os.Exit(1)
-		}
-	}
-	if _, err := adminStore.Pool().Exec(ctx, fmt.Sprintf(
-		"ALTER ROLE %s PASSWORD '%s'; ALTER ROLE %s SET search_path = public",
-		roleIdent, runtimePassword, roleIdent)); err != nil {
-		fmt.Printf("integration setup: configure runtime role: %v\n", err)
-		os.Exit(1)
-	}
-	grants := fmt.Sprintf(`
-		GRANT USAGE ON SCHEMA public TO %s;
-		GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %s;
-		GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %s;`,
-		roleIdent, roleIdent, roleIdent)
-	if _, err := adminStore.Pool().Exec(ctx, grants); err != nil {
-		fmt.Printf("integration setup: grant runtime role: %v\n", err)
+		fmt.Printf("integration setup: reopen admin SQL bridge: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -112,18 +89,6 @@ func TestMain(m *testing.M) {
 	defer rtStore.Close()
 
 	os.Exit(m.Run())
-}
-
-func credentialsFromURL(connURL string) (string, string, error) {
-	u, err := url.Parse(connURL)
-	if err != nil {
-		return "", "", err
-	}
-	if u.User == nil {
-		return "", "", fmt.Errorf("URL has no user info")
-	}
-	password, _ := u.User.Password()
-	return u.User.Username(), password, nil
 }
 
 // --- shared fixtures -------------------------------------------------------
@@ -151,7 +116,7 @@ func mustClient(t *testing.T, name string) postgres.Client {
 
 func mustPolicy(t *testing.T, name, class string, maxAttempts int) postgres.WorkloadPolicy {
 	t.Helper()
-	p, err := adminStore.UpsertWorkloadPolicy(context.Background(), postgres.WorkloadPolicy{
+	p, err := testsupport.ApplyPolicy(context.Background(), adminStore, postgres.WorkloadPolicy{
 		Name:                     uniqueName(name),
 		PriorityClass:            class,
 		MaxActiveTasks:           250,
@@ -173,7 +138,11 @@ func mustPolicy(t *testing.T, name, class string, maxAttempts int) postgres.Work
 
 func mustGrant(t *testing.T, clientID, workloadID int64) {
 	t.Helper()
-	if err := adminStore.GrantWorkload(context.Background(), clientID, workloadID); err != nil {
+	workload, err := adminStore.GetWorkloadPolicyByID(context.Background(), workloadID)
+	if err != nil {
+		t.Fatalf("get workload %d: %v", workloadID, err)
+	}
+	if err := adminStore.GrantWorkloadBySlug(context.Background(), clientID, workload.Name); err != nil {
 		t.Fatalf("grant workload %d to client %d: %v", workloadID, clientID, err)
 	}
 }
@@ -183,24 +152,26 @@ func mustEnqueue(t *testing.T, clientID, workloadID int64, capability, key strin
 	if len(key) < 8 {
 		key = uniqueName("taskkey")
 	}
-	res, err := adminStore.CreateTask(context.Background(), postgres.CreateTaskParams{
-		ClientID:       clientID,
-		WorkloadID:     workloadID,
-		Capability:     capability,
-		IdempotencyKey: key,
-		RequestHash:    []byte("0123456789abcdef0123456789abcdef"),
-		Payload:        []byte(`{"messages":[]}`),
-	})
+	var taskID uuid.UUID
+	err := adminDB.QueryRowContext(context.Background(), `
+		INSERT INTO tasks (client_id, workload_id, capability, idempotency_key, request_hash)
+		VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+		clientID, workloadID, capability, key,
+		[]byte("0123456789abcdef0123456789abcdef")).Scan(&taskID)
 	if err != nil {
 		t.Fatalf("enqueue task %s: %v", key, err)
 	}
-	return res.TaskID
+	if _, err := adminDB.ExecContext(context.Background(),
+		`INSERT INTO task_payloads (task_id, payload) VALUES ($1,$2)`, taskID, `{"messages":[]}`); err != nil {
+		t.Fatalf("insert task payload %s: %v", key, err)
+	}
+	return taskID
 }
 
 // backdateTask rewinds created_at so aging sees the given queued duration.
 func backdateTask(t *testing.T, taskID uuid.UUID, seconds int64) {
 	t.Helper()
-	if _, err := adminStore.Pool().Exec(context.Background(), `
+	if _, err := adminDB.ExecContext(context.Background(), `
 		UPDATE tasks SET created_at = now() - ($2 * interval '1 second')
 		WHERE id = $1`, taskID, seconds); err != nil {
 		t.Fatalf("backdate task %s: %v", taskID, err)
@@ -211,7 +182,7 @@ func backdateTask(t *testing.T, taskID uuid.UUID, seconds int64) {
 // fixtures (the claim order is global).
 func clearQueued(t *testing.T) {
 	t.Helper()
-	if _, err := adminStore.Pool().Exec(context.Background(),
+	if _, err := adminDB.ExecContext(context.Background(),
 		"DELETE FROM tasks WHERE state = 'queued'"); err != nil {
 		t.Fatalf("clear queued tasks: %v", err)
 	}

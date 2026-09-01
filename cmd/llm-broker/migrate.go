@@ -44,9 +44,14 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		fmt.Fprintf(stderr, "invalid configuration: %v\n", err)
 		return 1
 	}
-	url := os.Getenv(cfg.Database.URLEnv)
+	envName := cfg.Database.MigrationURLEnv
+	if envName == "" {
+		fmt.Fprintln(stderr, "llm-broker migrate: database.migration_url_env is not configured")
+		return 1
+	}
+	url := os.Getenv(envName)
 	if url == "" {
-		fmt.Fprintf(stderr, "llm-broker migrate: environment variable %s is empty or unset\n", cfg.Database.URLEnv)
+		fmt.Fprintf(stderr, "llm-broker migrate: environment variable %s is empty or unset\n", envName)
 		return 1
 	}
 
