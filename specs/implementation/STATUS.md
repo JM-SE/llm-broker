@@ -4,7 +4,7 @@
 
 - Current phase: hardening track H00 `accepted` 2026-08-26 (product track P00-P09 remains accepted).
 - State: H00 closed with candidate `96ce3ffb88af4c18a6d55187306193dc9e93e319` tree `45c731cc4b0ac4e084ca1e35a7861a976702f991`; E9 `PASS` independent review `reviews/H00-E9-independent-closure-review-2026-08-26.md`.
-- Next phase: H01 `ready_for_review` (true bounded scheduler affinity) — unblocked by H00 acceptance; H02 remains `blocked` until H01 accepted. Role-Radar F10.3A is now unblocked.
+- Next phase: H01 `accepted` 2026-09-01 (true bounded scheduler affinity) at `8068c49b967f56b8778faa8f2670e9b87defe910` + `d4fef67` correction; H02 `spec_ready_for_review` (`hardening/H02_generic_dual_route_conformance.spec.md`) — implementation blocked until spec review and explicit approval. Role-Radar F10.3A is now unblocked.
 - Integration track L00 remains optional and independent.
 - Git policy: commits are operator-controlled unless explicitly delegated for a phase.
 
@@ -28,8 +28,8 @@
 | Phase | State | Approval | Evidence |
 | --- | --- | --- | --- |
 | H00 | `accepted` 2026-08-26 | approved — E9 PASS `96ce3ffb88af4c18a6d55187306193dc9e93e319` / `45c731cc` | `generated/H00/96ce3ffb88af4c18a6d55187306193dc9e93e319` + `reviews/H00-E9-independent-closure-review-2026-08-26.md` |
-| H01 | `ready_for_review` | unblocked by accepted H00 | — |
-| H02 | `blocked` | requires accepted H01 | — |
+| H01 | `accepted` 2026-09-01 | approved — `8068c49b967f56b8778faa8f2670e9b87defe910` / `a05baef7` + correction `d4fef67`; review `PASS` with notes `reviews/H01-post-implementation-review-2026-09-08.md` | `reviews/H01-post-implementation-review-2026-09-08.md` |
+| H02 | `spec_ready_for_review` | requires spec review and explicit approval — `hardening/H02_generic_dual_route_conformance.spec.md` (external workspace) | — |
 
 ## Integration Track
 
@@ -88,8 +88,8 @@
 - Product P09: accepted (packaging and release candidate, Docker, compose
   fake-mode, systemd examples, release artifacts).
 - Product track complete. Integration track optional and independent.
-- Hardening H00: `accepted` 2026-08-26 — candidate `96ce3ffb88af4c18a6d55187306193dc9e93e319` tree `45c731cc4b0ac4e084ca1e35a7861a976702f991`, E1-E8 PASS + E9 PASS `reviews/H00-E9-independent-closure-review-2026-08-26.md`, bundle `generated/H00/96ce3ffb88af4c18a6d55187306193dc9e93e319` frozen; H01 `ready_for_review`.
+- Hardening H00: `accepted` 2026-08-26 — candidate `96ce3ffb88af4c18a6d55187306193dc9e93e319` tree `45c731cc4b0ac4e084ca1e35a7861a976702f991`, E1-E8 PASS + E9 PASS `reviews/H00-E9-independent-closure-review-2026-08-26.md`, bundle `generated/H00/96ce3ffb88af4c18a6d55187306193dc9e93e319` frozen; H01 `accepted` 2026-09-01 at `8068c49b967f56b8778faa8f2670e9b87defe910` + correction `d4fef67`, review `PASS` with notes `reviews/H01-post-implementation-review-2026-09-08.md`; H02 `spec_ready_for_review`.
 
 ## Suggested Next Commit Message
 
-`docs: accept H00 96ce3ff and unblock H01`
+`docs: sync STATUS H01 accepted (8068c49+d4fef67), H02 spec_ready_for_review`
