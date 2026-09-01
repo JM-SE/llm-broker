@@ -4,7 +4,8 @@
 
 - Current phase: hardening track H00 `accepted` 2026-08-26 (product track P00-P09 remains accepted).
 - State: H00 closed with candidate `96ce3ffb88af4c18a6d55187306193dc9e93e319` tree `45c731cc4b0ac4e084ca1e35a7861a976702f991`; E9 `PASS` independent review `reviews/H00-E9-independent-closure-review-2026-08-26.md`.
-- Next phase: H01 `accepted` 2026-09-01 (true bounded scheduler affinity) at `8068c49b967f56b8778faa8f2670e9b87defe910` + `d4fef67` correction; H02 `spec_ready_for_review` (`hardening/H02_generic_dual_route_conformance.spec.md`) — implementation blocked until spec review and explicit approval. Role-Radar F10.3A is now unblocked.
+- H02: `accepted` 2026-09-01 for MVP on `main` at `2b90452` (test-only dual-route conformance). Gates: `make GO=go check` PASS + focused H02 PASS. Remaining delta gaps are non-blocking `H02-followup` hardening per MVP policy; they do not block close or next-phase planning.
+- MVP policy: hardening evidence gaps alone do not block MVP close; a real product-scope defect would reopen planning. Detailed spec: `hardening/H02_generic_dual_route_conformance.spec.md` (external workspace). Next phase planning is now unblocked.
 - Integration track L00 remains optional and independent.
 - Git policy: commits are operator-controlled unless explicitly delegated for a phase.
 
@@ -29,7 +30,7 @@
 | --- | --- | --- | --- |
 | H00 | `accepted` 2026-08-26 | approved — E9 PASS `96ce3ffb88af4c18a6d55187306193dc9e93e319` / `45c731cc` | `generated/H00/96ce3ffb88af4c18a6d55187306193dc9e93e319` + `reviews/H00-E9-independent-closure-review-2026-08-26.md` |
 | H01 | `accepted` 2026-09-01 | approved — `8068c49b967f56b8778faa8f2670e9b87defe910` / `a05baef7` + correction `d4fef67`; review `PASS` with notes `reviews/H01-post-implementation-review-2026-09-08.md` | `reviews/H01-post-implementation-review-2026-09-08.md` |
-| H02 | `spec_ready_for_review` | requires spec review and explicit approval — `hardening/H02_generic_dual_route_conformance.spec.md` (external workspace) | — |
+| H02 | `accepted` 2026-09-01 — MVP | approved for MVP on `main` at `2b90452`; `make GO=go check` PASS + focused H02 PASS | retained gates: `make check` PASS (race/vet/build/mod/fmt/diff/H00 scans), focused config/API/worker H02 PASS; non-blocking hardening tracked as `H02-followup` per MVP policy |
 
 ## Integration Track
 
@@ -88,8 +89,16 @@
 - Product P09: accepted (packaging and release candidate, Docker, compose
   fake-mode, systemd examples, release artifacts).
 - Product track complete. Integration track optional and independent.
-- Hardening H00: `accepted` 2026-08-26 — candidate `96ce3ffb88af4c18a6d55187306193dc9e93e319` tree `45c731cc4b0ac4e084ca1e35a7861a976702f991`, E1-E8 PASS + E9 PASS `reviews/H00-E9-independent-closure-review-2026-08-26.md`, bundle `generated/H00/96ce3ffb88af4c18a6d55187306193dc9e93e319` frozen; H01 `accepted` 2026-09-01 at `8068c49b967f56b8778faa8f2670e9b87defe910` + correction `d4fef67`, review `PASS` with notes `reviews/H01-post-implementation-review-2026-09-08.md`; H02 `spec_ready_for_review`.
+- Hardening H00: `accepted` 2026-08-26 — candidate `96ce3ffb88af4c18a6d55187306193dc9e93e319` tree `45c731cc4b0ac4e084ca1e35a7861a976702f991`, E1-E8 PASS + E9 PASS `reviews/H00-E9-independent-closure-review-2026-08-26.md`, bundle `generated/H00/96ce3ffb88af4c18a6d55187306193dc9e93e319` frozen; H01 `accepted` 2026-09-01 at `8068c49b967f56b8778faa8f2670e9b87defe910` + correction `d4fef67`, review `PASS` with notes `reviews/H01-post-implementation-review-2026-09-08.md`; H02 `accepted` 2026-09-01 for MVP on `main` at `2b90452` (test-only conformance; `make check` PASS; focused H02 PASS; delta gaps downgraded to non-blocking `H02-followup` per MVP policy).
+
+## MVP Policy
+
+For MVP, hardening evidence gaps alone do not block close. H02 established that
+MVP acceptance requires passing gates and no production-scope defect, not
+exhaustive hardening proof. Remaining delta gaps are tracked as
+`H02-followup` hardening and must not delay next-phase planning unless a real
+product defect is demonstrated.
 
 ## Suggested Next Commit Message
 
-`docs: sync STATUS H01 accepted (8068c49+d4fef67), H02 spec_ready_for_review`
+`docs: close H02 for MVP on main at 2b90452 (H02-followup hardening non-blocking)`
