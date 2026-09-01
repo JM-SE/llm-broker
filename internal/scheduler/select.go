@@ -12,7 +12,8 @@ import (
 // cannot drift from the pure policy; a conformance test verifies SQL and
 // pure policy agree. Eligibility requires queued state and attempts below the
 // durable workload budget. Authorization is deliberately left to worker
-// preflight so revocation cannot strand queued work.
+// preflight so revocation cannot strand queued work. Arguments are an active
+// affinity flag and its generic capability key.
 func eligibleSelectSQL() string {
 	high := int(domain.PriorityHigh.Base())
 	normal := int(domain.PriorityNormal.Base())
@@ -39,16 +40,27 @@ func eligibleSelectSQL() string {
 			WHERE t.state = 'queued'
 			  AND t.attempts < w.max_attempts
 			  AND (t.retry_available_at IS NULL OR t.retry_available_at <= s.ts)
-			ORDER BY effective_priority DESC, t.created_at, t.id
-			FOR UPDATE OF t SKIP LOCKED
+			),
+			max_priority AS (
+				SELECT MAX(effective_priority) AS effective_priority FROM eligible
+			),
+			cohort AS (
+				SELECT e.*
+				FROM eligible e
+				CROSS JOIN max_priority m
+				WHERE e.effective_priority = m.effective_priority
+			)
+			SELECT e.id, e.client_id, e.workload_id, e.name, e.capability, e.idempotency_key,
+			       e.request_hash, e.state, e.attempts, e.lease_until, e.started_at,
+			       e.finished_at, e.cancel_requested_at, e.retry_available_at,
+			       e.created_at, e.updated_at,
+			       e.payload, e.effective_priority
+			FROM cohort e
+			JOIN tasks locked_task ON locked_task.id = e.id
+			ORDER BY CASE WHEN $1::boolean AND e.capability = $2::text THEN 0 ELSE 1 END,
+				e.created_at, e.id
+			FOR UPDATE OF locked_task SKIP LOCKED
 			LIMIT 1
-		)
-		SELECT id, client_id, workload_id, name, capability, idempotency_key,
-		       request_hash, state, attempts, lease_until, started_at,
-		       finished_at, cancel_requested_at, retry_available_at,
-		       created_at, updated_at,
-		       payload, effective_priority
-		FROM eligible
 		`,
 		high,
 		normal, int(domain.AgingPer), int(domain.AgingStep), normalCap,

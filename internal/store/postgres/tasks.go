@@ -338,8 +338,8 @@ func (s *Store) ClaimNextQueued(ctx context.Context, workerID uuid.UUID, lease t
 // with FOR UPDATE SKIP LOCKED LIMIT 1. Eligibility (state and attempts) is
 // part of the query so SQL and pure policy cannot disagree; authorization is a
 // worker preflight concern.
-func (s *Store) ClaimNextByPolicy(ctx context.Context, workerID uuid.UUID, lease time.Duration, query string) (ClaimedTask, error) {
-	return s.claimSelect(ctx, workerID, lease, query)
+func (s *Store) ClaimNextByPolicy(ctx context.Context, workerID uuid.UUID, lease time.Duration, query string, args ...any) (ClaimedTask, error) {
+	return s.claimSelect(ctx, workerID, lease, query, args...)
 }
 
 // claimSelect is the single claim transaction: select exactly one eligible

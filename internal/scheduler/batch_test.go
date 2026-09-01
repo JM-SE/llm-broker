@@ -37,6 +37,37 @@ func TestBatchContinuesSameCapabilityUntilSize(t *testing.T) {
 	}
 }
 
+func TestPreferredCapabilityBoundsAndReplacement(t *testing.T) {
+	var b AffinityState
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	maxAge := 10 * time.Minute
+
+	if _, ok := b.PreferredCapability(now, 4, maxAge); ok {
+		t.Fatal("closed batch unexpectedly provided a preference")
+	}
+	b.Consider("instruct", 100, 4, maxAge, now)
+	if got, ok := b.PreferredCapability(now.Add(maxAge), 4, maxAge); !ok || got != "instruct" {
+		t.Fatalf("at age bound = %q, %v; want instruct, true", got, ok)
+	}
+	if got, ok := b.PreferredCapability(now.Add(maxAge+time.Nanosecond), 4, maxAge); ok || got != "" {
+		t.Fatalf("expired preference = %q, %v; want empty, false", got, ok)
+	}
+
+	for i := 1; i < 4; i++ {
+		b.Consider("instruct", 100, 4, maxAge, now.Add(time.Duration(i)*time.Second))
+	}
+	if got, ok := b.PreferredCapability(now, 4, maxAge); ok || got != "" {
+		t.Fatalf("size-exhausted preference = %q, %v; want empty, false", got, ok)
+	}
+
+	b.Close()
+	b.Consider("instruct", 100, 4, maxAge, now)
+	d := b.Consider("thinking", 100, 4, maxAge, now.Add(time.Second))
+	if d.Reason != "batch_opened" || b.Key != "thinking" || b.Claimed != 1 {
+		t.Fatalf("replacement decision/state = %+v / %+v", d, b)
+	}
+}
+
 func TestBatchClosesAtSize(t *testing.T) {
 	var b AffinityState
 	now := time.Now()
