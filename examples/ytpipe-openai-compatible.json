@@ -1,0 +1,47 @@
+{
+  "version": 2,
+  "api": {
+    "listen": "127.0.0.1:8010",
+    "metrics_enabled": true
+  },
+  "database": {
+    "url_env": "LLM_BROKER_DATABASE_URL",
+    "migration_url_env": "LLM_BROKER_MIGRATION_DATABASE_URL",
+    "provisioner_url_env": "LLM_BROKER_PROVISIONER_DATABASE_URL",
+    "max_connections": 10
+  },
+  "retention": {
+    "payload": "1h",
+    "result": "168h",
+    "metadata": "720h"
+  },
+  "backends": {
+    "llama-server": {
+      "type": "openai_compatible",
+      "base_url": "http://llama-server:8001/v1",
+      "model": "operator-model-alias",
+      "credential_env": "LLM_BACKEND_API_KEY"
+    }
+  },
+  "capabilities": {
+    "summarize": {
+      "backend": "llama-server"
+    }
+  },
+  "workloads": {
+    "batch-summary": {
+      "priority_class": "normal",
+      "max_active_tasks": 10,
+      "max_attempts": 3,
+      "retry_delays_seconds": [1, 5],
+      "max_output_tokens": 512,
+      "allowed_generation": {
+        "max_tokens": { "max": 512 },
+        "temperature": { "min": 0, "max": 2 }
+      },
+      "required_features": [],
+      "allowed_capabilities": ["summarize"],
+      "workload_timeout_seconds": 300
+    }
+  }
+}

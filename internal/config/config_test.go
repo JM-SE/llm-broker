@@ -2,11 +2,15 @@ package config
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/JM-SE/llm-broker/internal/domain"
+	"github.com/JM-SE/llm-broker/internal/policy"
 )
 
 func validConfigJSON() string {
@@ -48,6 +52,47 @@ func TestDecodeValid(t *testing.T) {
 	}
 	if cfg.Retention.Payload.Duration != time.Hour {
 		t.Errorf("payload retention = %v", cfg.Retention.Payload.Duration)
+	}
+}
+
+func TestYTPipeExampleMatchesProbeContract(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	path := filepath.Join(filepath.Dir(source), "..", "..", "examples", "ytpipe-openai-compatible.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read YTPipe example: %v", err)
+	}
+	cfg, err := Decode(strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatalf("decode YTPipe example: %v", err)
+	}
+	workload, ok := cfg.Workloads["batch-summary"]
+	if !ok {
+		t.Fatal("YTPipe workload is missing")
+	}
+	if workload.MaxOutputTokens != 512 || len(workload.AllowedCapabilities) != 1 || workload.AllowedCapabilities[0] != "summarize" {
+		t.Fatalf("unexpected YTPipe workload: %+v", workload)
+	}
+	projected, err := cfg.PolicyProjections()
+	if err != nil {
+		t.Fatalf("project YTPipe policy: %v", err)
+	}
+	var batch policy.Workload
+	for _, candidate := range projected {
+		if candidate.Name == "batch-summary" {
+			batch = candidate
+			break
+		}
+	}
+	maxTokens := int64(512)
+	temperature := 0.7
+	if err := policy.ValidateGeneration(domain.Generation{
+		MaxTokens: &maxTokens, Temperature: &temperature,
+	}, batch.AllowedGeneration, batch.MaxOutputTokens); err != nil {
+		t.Fatalf("YTPipe probe generation rejected: %v", err)
 	}
 }
 

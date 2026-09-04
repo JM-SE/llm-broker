@@ -41,6 +41,18 @@ For an OpenAI-compatible endpoint, provide operator configuration and credential
 LLM_BROKER_CONFIG_FILE=examples/openai.json make run-dev
 ```
 
+For the YTPipe summary contract, use the dedicated example as a starting point:
+
+```bash
+LLM_BROKER_CONFIG_FILE=examples/ytpipe-openai-compatible.json make run-dev
+```
+
+Set `base_url`, `model`, and the environment variable named by
+`credential_env` for the target OpenAI-compatible `chat/completions` server.
+The example deliberately exposes only the `batch-summary` workload and
+`summarize` capability used by YTPipe, with generation limits matching its
+manual broker probe.
+
 See `docs/` for detailed setup, operations, and adapter development guides.
 
 ## Compatibility
