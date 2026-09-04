@@ -33,6 +33,9 @@ func TestRedactedJSONMasksCredentials(t *testing.T) {
 	if !strings.Contains(s, `"credential_env": "***"`) {
 		t.Errorf("redacted output should mask credential_env: %s", s)
 	}
+	if !strings.Contains(s, `"response_header_timeout_seconds": 15`) {
+		t.Errorf("redacted output should include the effective response header timeout: %s", s)
+	}
 	if strings.Contains(s, "supersecret") {
 		t.Error("unexpected secret material")
 	}

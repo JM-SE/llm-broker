@@ -20,7 +20,8 @@
       "type": "openai_compatible",
       "base_url": "http://llama-server:8001/v1",
       "model": "operator-model-alias",
-      "credential_env": "LLM_BACKEND_API_KEY"
+      "credential_env": "LLM_BACKEND_API_KEY",
+      "response_header_timeout_seconds": 60
     }
   },
   "capabilities": {

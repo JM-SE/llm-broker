@@ -51,6 +51,26 @@ func TestConformance(t *testing.T) {
 	conformance.Run(t, func() backend.Adapter { return newAdapter(t, srv.URL) })
 }
 
+func TestConfiguredResponseHeaderTimeout(t *testing.T) {
+	t.Setenv("LLM_BROKER_TEST_BACKEND_KEY", testCredential)
+	a, err := New(config.BackendConfig{
+		Type: config.AdapterOpenAICompatible, BaseURL: "http://runtime.example/v1",
+		Model: "model", CredentialEnv: "LLM_BROKER_TEST_BACKEND_KEY",
+		ResponseHeaderTimeoutSeconds: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := a.(*Adapter)
+	if adapter.respHeaderTimeout != 60*time.Second {
+		t.Fatalf("adapter timeout = %v, want 1m", adapter.respHeaderTimeout)
+	}
+	transport, ok := adapter.client.Transport.(*http.Transport)
+	if !ok || transport.ResponseHeaderTimeout != 60*time.Second {
+		t.Fatalf("transport timeout = %v, want 1m", transport.ResponseHeaderTimeout)
+	}
+}
+
 func TestGoldenRequestMapping(t *testing.T) {
 	var gotBody string
 	var gotHeaders http.Header

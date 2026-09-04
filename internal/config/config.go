@@ -121,6 +121,9 @@ type BackendConfig struct {
 	// CredentialEnv names the environment variable holding the backend
 	// credential; only the name lives in configuration.
 	CredentialEnv string `json:"credential_env,omitempty"`
+	// ResponseHeaderTimeoutSeconds bounds how long an OpenAI-compatible
+	// provider may take to begin its response.
+	ResponseHeaderTimeoutSeconds int `json:"response_header_timeout_seconds,omitempty"`
 	// Features declares adapter capabilities required by workloads.
 	Features []string `json:"features,omitempty"`
 	// Delay (fake only) simulates inference latency.

@@ -12,13 +12,14 @@ import (
 // defense in depth for future fields.
 func (c *Config) RedactedJSON() ([]byte, error) {
 	type redactedBackend struct {
-		Type          string    `json:"type"`
-		BaseURL       string    `json:"base_url,omitempty"`
-		Model         string    `json:"model,omitempty"`
-		CredentialEnv string    `json:"credential_env,omitempty"`
-		Features      []string  `json:"features,omitempty"`
-		Delay         *Duration `json:"delay,omitempty"`
-		FailMode      string    `json:"fail_mode,omitempty"`
+		Type                         string    `json:"type"`
+		BaseURL                      string    `json:"base_url,omitempty"`
+		Model                        string    `json:"model,omitempty"`
+		CredentialEnv                string    `json:"credential_env,omitempty"`
+		ResponseHeaderTimeoutSeconds int       `json:"response_header_timeout_seconds,omitempty"`
+		Features                     []string  `json:"features,omitempty"`
+		Delay                        *Duration `json:"delay,omitempty"`
+		FailMode                     string    `json:"fail_mode,omitempty"`
 	}
 	redacted := struct {
 		Version      int                        `json:"version"`
@@ -39,12 +40,13 @@ func (c *Config) RedactedJSON() ([]byte, error) {
 	}
 	for name, b := range c.Backends {
 		rb := redactedBackend{
-			Type:          b.Type,
-			BaseURL:       b.BaseURL,
-			Model:         b.Model,
-			CredentialEnv: b.CredentialEnv,
-			Features:      b.Features,
-			FailMode:      b.FailMode,
+			Type:                         b.Type,
+			BaseURL:                      b.BaseURL,
+			Model:                        b.Model,
+			CredentialEnv:                b.CredentialEnv,
+			ResponseHeaderTimeoutSeconds: b.ResponseHeaderTimeoutSeconds,
+			Features:                     b.Features,
+			FailMode:                     b.FailMode,
 		}
 		if b.Delay.Duration > 0 {
 			d := b.Delay

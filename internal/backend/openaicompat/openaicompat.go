@@ -33,11 +33,10 @@ func init() {
 // built-in adapter; the overall inference budget comes from the worker
 // context deadline.
 const (
-	connectTimeout        = 5 * time.Second
-	responseHeaderTimeout = 15 * time.Second
-	overallDefaultBudget  = 15 * time.Minute
-	maxResponseBytes      = 4 << 20 // 4 MiB output ceiling
-	maxErrorBodyBytes     = 4 << 10 // provider error bodies are bounded
+	connectTimeout       = 5 * time.Second
+	overallDefaultBudget = 15 * time.Minute
+	maxResponseBytes     = 4 << 20 // 4 MiB output ceiling
+	maxErrorBodyBytes    = 4 << 10 // provider error bodies are bounded
 	// maxBodyBytes guards against pathologically large request bodies.
 	maxBodyBytes = 512 << 10
 )
@@ -76,6 +75,11 @@ func New(cfg config.BackendConfig) (backend.Adapter, error) {
 		}
 		features[pf] = true
 	}
+	headerTimeoutSeconds := cfg.ResponseHeaderTimeoutSeconds
+	if headerTimeoutSeconds == 0 {
+		headerTimeoutSeconds = config.DefaultResponseHeaderTimeoutSeconds
+	}
+	responseHeaderTimeout := time.Duration(headerTimeoutSeconds) * time.Second
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: connectTimeout, KeepAlive: 30 * time.Second}).DialContext,

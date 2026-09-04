@@ -14,12 +14,13 @@ import (
 // Defaults are applied after decoding, before validation. They are part of
 // the product contract.
 const (
-	DefaultListen          = "127.0.0.1:8010"
-	DefaultBodyLimitBytes  = 512 * 1024
-	DefaultMaxConnections  = 10
-	DefaultConnectTimeout  = 10 // seconds
-	DefaultMaxActiveTasks  = 250
-	DefaultMaxOutputTokens = 8192
+	DefaultListen                       = "127.0.0.1:8010"
+	DefaultBodyLimitBytes               = 512 * 1024
+	DefaultMaxConnections               = 10
+	DefaultConnectTimeout               = 10 // seconds
+	DefaultMaxActiveTasks               = 250
+	DefaultMaxOutputTokens              = 8192
+	DefaultResponseHeaderTimeoutSeconds = 15
 )
 
 // LoadFile reads, decodes, and cross-validates a configuration file.
@@ -109,6 +110,12 @@ func applyDefaults(c *Config) {
 			w.MaxOutputTokens = DefaultMaxOutputTokens
 		}
 		c.Workloads[name] = w
+	}
+	for name, b := range c.Backends {
+		if b.Type == AdapterOpenAICompatible && b.ResponseHeaderTimeoutSeconds == 0 {
+			b.ResponseHeaderTimeoutSeconds = DefaultResponseHeaderTimeoutSeconds
+			c.Backends[name] = b
+		}
 	}
 }
 

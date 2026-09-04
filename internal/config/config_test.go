@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -76,6 +77,9 @@ func TestYTPipeExampleMatchesProbeContract(t *testing.T) {
 	if workload.MaxOutputTokens != 512 || len(workload.AllowedCapabilities) != 1 || workload.AllowedCapabilities[0] != "summarize" {
 		t.Fatalf("unexpected YTPipe workload: %+v", workload)
 	}
+	if got := cfg.Backends["llama-server"].ResponseHeaderTimeoutSeconds; got != 60 {
+		t.Fatalf("YTPipe response header timeout = %d, want 60", got)
+	}
 	projected, err := cfg.PolicyProjections()
 	if err != nil {
 		t.Fatalf("project YTPipe policy: %v", err)
@@ -93,6 +97,34 @@ func TestYTPipeExampleMatchesProbeContract(t *testing.T) {
 		MaxTokens: &maxTokens, Temperature: &temperature,
 	}, batch.AllowedGeneration, batch.MaxOutputTokens); err != nil {
 		t.Fatalf("YTPipe probe generation rejected: %v", err)
+	}
+}
+
+func TestOpenAICompatibleResponseHeaderTimeoutDefaultsAndBounds(t *testing.T) {
+	base := strings.Replace(validConfigJSON(), `"fake": {"type": "fake"}`, `"primary": {"type": "openai_compatible", "base_url": "http://llm-runtime.example:8080/v1", "model": "alias", "credential_env": "LLM_BACKEND_KEY"}`, 1)
+	base = strings.Replace(base, `"instruct": {"backend": "fake"}`, `"instruct": {"backend": "primary"}`, 1)
+	for _, tc := range []struct {
+		name  string
+		field string
+		want  int
+	}{
+		{name: "default", want: DefaultResponseHeaderTimeoutSeconds},
+		{name: "zero explicit", field: `, "response_header_timeout_seconds": 0`, want: DefaultResponseHeaderTimeoutSeconds},
+	} {
+		doc := strings.Replace(base, `"credential_env": "LLM_BACKEND_KEY"`, `"credential_env": "LLM_BACKEND_KEY"`+tc.field, 1)
+		cfg, err := Decode(strings.NewReader(doc))
+		if err != nil {
+			t.Fatalf("%s: decode: %v", tc.name, err)
+		}
+		if got := cfg.Backends["primary"].ResponseHeaderTimeoutSeconds; got != tc.want {
+			t.Errorf("%s: timeout = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+	for _, value := range []int{-1, 301} {
+		doc := strings.Replace(base, `"credential_env": "LLM_BACKEND_KEY"`, fmt.Sprintf(`"credential_env": "LLM_BACKEND_KEY", "response_header_timeout_seconds": %d`, value), 1)
+		if _, err := Decode(strings.NewReader(doc)); err == nil {
+			t.Errorf("timeout %d should fail", value)
+		}
 	}
 }
 

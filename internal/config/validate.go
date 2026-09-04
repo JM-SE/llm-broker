@@ -176,6 +176,9 @@ func validateFakeBackend(name string, b BackendConfig) error {
 			return fmt.Errorf("backends.%s.fail_mode %q is not supported (supported: none, reject, malformed, unsent, transient, indeterminate)", name, b.FailMode)
 		}
 	}
+	if b.ResponseHeaderTimeoutSeconds != 0 {
+		return fmt.Errorf("backends.%s: type fake must not declare response_header_timeout_seconds", name)
+	}
 	if b.Delay.Duration < 0 {
 		return fmt.Errorf("backends.%s.delay must not be negative", name)
 	}
@@ -203,6 +206,9 @@ func validateOpenAICompatibleBackend(name string, b BackendConfig) error {
 	}
 	if b.FailMode != "" {
 		return fmt.Errorf("backends.%s: type openai_compatible must not declare fail_mode", name)
+	}
+	if b.ResponseHeaderTimeoutSeconds != 0 && (b.ResponseHeaderTimeoutSeconds < 1 || b.ResponseHeaderTimeoutSeconds > 300) {
+		return fmt.Errorf("backends.%s.response_header_timeout_seconds %d outside [1, 300]", name, b.ResponseHeaderTimeoutSeconds)
 	}
 	return nil
 }
