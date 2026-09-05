@@ -1,0 +1,7 @@
+[
+  {"status": "pending"},
+  {"status": "succeeded", "result": {"content": "generic result", "finish_reason": "stop", "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}}},
+  {"status": "failed", "error": {"class": "internal", "code": "internal_error", "message": "the broker could not complete the request"}},
+  {"status": "cancelled"},
+  {"status": "expired"}
+]

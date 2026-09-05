@@ -1,0 +1,7 @@
+[
+  {"name": "accepted", "status": "pending"},
+  {"name": "completed", "status": "succeeded"},
+  {"name": "rejected", "status": "failed"},
+  {"name": "cancelled", "status": "cancelled"},
+  {"name": "deadline", "status": "expired"}
+]

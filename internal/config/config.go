@@ -149,6 +149,9 @@ type WorkloadPolicy struct {
 	RetryDelaysSeconds []int `json:"retry_delays_seconds,omitempty"`
 	// MaxOutputTokens caps generated output (hard ceiling MaxOutputTokens).
 	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
+	// MaxOutputBytes caps decoded UTF-8 content independently from generation
+	// tokens. Zero preserves the v2 legacy tokens*4 runtime fallback.
+	MaxOutputBytes int `json:"max_output_bytes,omitempty"`
 	// AllowedGeneration restricts the generation vocabulary per field,
 	// with optional narrower ranges. Absent map is deny-all by policy.
 	AllowedGeneration map[string]GenerationConstraint `json:"allowed_generation,omitempty"`

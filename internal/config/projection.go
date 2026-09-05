@@ -55,6 +55,8 @@ func (c *Config) PolicyProjections() ([]policy.Workload, error) {
 			MaxActiveTasks: workload.MaxActiveTasks, MaxAttempts: workload.MaxAttempts,
 			RetryDelaysSeconds:       append([]int(nil), workload.RetryDelaysSeconds...),
 			MaxOutputTokens:          workload.MaxOutputTokens,
+			MaxOutputBytes:           workload.MaxOutputBytes,
+			MaxOutputBytesExplicit:   workload.MaxOutputBytes > 0,
 			AllowedCapabilities:      append([]string(nil), workload.AllowedCapabilities...),
 			AllowedGeneration:        canonicalGeneration,
 			RequiredFeatures:         requiredFeatures,

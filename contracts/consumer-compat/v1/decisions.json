@@ -1,0 +1,1896 @@
+[
+  {
+    "name": "compatible",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "compatible",
+    "findings": []
+  },
+  {
+    "name": "request-and-output-bounds",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 512,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 300000,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "output_bytes_limit_insufficient",
+        "count": 1
+      },
+      {
+        "code": "request_content_limit_insufficient",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "api-version-incompatible",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=9.9.9 <10.0.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "api_version_incompatible",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "workload-unavailable",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "missing-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "workload_unavailable",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "capability-unavailable",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "missing-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "capability_unavailable",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "generation-not-admitted",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "generation_not_admitted",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "response-schema-unsupported",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "provider": {
+          "type": "openai_compatible",
+          "base_url": "http://runtime.invalid/v1",
+          "model": "alias",
+          "credential_env": "BACKEND_KEY"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "provider"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "json_schema",
+        "schema_required": true
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "response_schema_unsupported",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "response-kind-unsupported",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "provider": {
+          "type": "openai_compatible",
+          "base_url": "http://runtime.invalid/v1",
+          "model": "alias",
+          "credential_env": "BACKEND_KEY"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "provider"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "json_object"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "response_kind_unsupported",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "request-content-limit-insufficient",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 300000,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "request_content_limit_insufficient",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "explicit-output-bytes-required",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "explicit_output_bytes_required",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "output-bytes-limit-insufficient",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 4096,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "output_bytes_limit_insufficient",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "response-start-default-15-insufficient-for-60",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        },
+        "provider": {
+          "type": "openai_compatible",
+          "base_url": "http://runtime.invalid/v1",
+          "model": "alias",
+          "credential_env": "BACKEND_KEY"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "provider"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 60,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "backend_response_start_timeout_insufficient",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "response-start-configured-60-passes",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        },
+        "provider": {
+          "type": "openai_compatible",
+          "base_url": "http://runtime.invalid/v1",
+          "model": "alias",
+          "credential_env": "BACKEND_KEY",
+          "response_header_timeout_seconds": 60
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "provider"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 60,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "compatible",
+    "findings": []
+  },
+  {
+    "name": "workload-timeout-insufficient",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 3600,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "workload_timeout_insufficient",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "attempt-limit-exceeded",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 3,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60,
+          "retry_delays_seconds": [
+            1,
+            5
+          ]
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "attempt_limit_exceeded",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "consumer-deadline-too-short",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 60
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "consumer_deadline_too_short",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "capability-features-unsupported",
+    "mode": "desired",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60,
+          "required_features": [
+            "structured_output"
+          ]
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "capability_features_unsupported",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "client-not-found",
+    "mode": "effective",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "effective": {
+      "client_found": false,
+      "client_enabled": true,
+      "grant_present": true,
+      "policy_found": true,
+      "topology": "match",
+      "durable_overrides": {}
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "client_not_found",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "client-disabled",
+    "mode": "effective",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "effective": {
+      "client_found": true,
+      "client_enabled": false,
+      "grant_present": true,
+      "policy_found": true,
+      "topology": "match",
+      "durable_overrides": {}
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "client_disabled",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "workload-grant-missing",
+    "mode": "effective",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "effective": {
+      "client_found": true,
+      "client_enabled": true,
+      "grant_present": false,
+      "policy_found": true,
+      "topology": "match",
+      "durable_overrides": {}
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "workload_grant_missing",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "topology-mismatch-only",
+    "mode": "effective",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "effective": {
+      "client_found": true,
+      "client_enabled": true,
+      "grant_present": true,
+      "policy_found": true,
+      "topology": "mismatch",
+      "durable_overrides": {}
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "topology_mismatch",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "durable-policy-drift-only",
+    "mode": "effective",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "effective": {
+      "client_found": true,
+      "client_enabled": true,
+      "grant_present": true,
+      "policy_found": true,
+      "topology": "match",
+      "durable_overrides": {
+        "max_output_bytes": 4096
+      }
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "durable_policy_drift",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "name": "durable-state-drift",
+    "mode": "effective",
+    "config": {
+      "version": 2,
+      "api": {
+        "listen": "127.0.0.1:8010"
+      },
+      "database": {
+        "url_env": "DATABASE_URL",
+        "provisioner_url_env": "PROVISIONER_URL",
+        "migration_url_env": "MIGRATION_URL"
+      },
+      "retention": {
+        "payload": "1h",
+        "result": "2h",
+        "metadata": "3h"
+      },
+      "backends": {
+        "backend": {
+          "type": "fake"
+        }
+      },
+      "capabilities": {
+        "generic-capability": {
+          "backend": "backend"
+        }
+      },
+      "workloads": {
+        "generic-workload": {
+          "priority_class": "normal",
+          "max_attempts": 1,
+          "max_output_bytes": 2048,
+          "allowed_capabilities": [
+            "generic-capability"
+          ],
+          "allowed_generation": {
+            "max_tokens": {
+              "max": 128
+            },
+            "temperature": {
+              "min": 0,
+              "max": 1
+            },
+            "stop": {
+              "max_items": 2
+            }
+          },
+          "workload_timeout_seconds": 60
+        }
+      }
+    },
+    "manifest": {
+      "version": "consumer-compat/v1",
+      "api_range": ">=0.1.1 <0.2.0",
+      "workload": "generic-workload",
+      "capability": "generic-capability",
+      "generation": {
+        "max_tokens": 128,
+        "temperature": 0.7
+      },
+      "response": {
+        "kind": "text"
+      },
+      "max_request_content_bytes": 131072,
+      "required_min_output_bytes": 1024,
+      "min_workload_timeout_seconds": 60,
+      "min_backend_response_start_timeout_seconds": 0,
+      "max_acceptable_attempts": 1,
+      "consumer_overall_deadline_seconds": 120
+    },
+    "effective": {
+      "client_found": true,
+      "client_enabled": true,
+      "grant_present": true,
+      "policy_found": true,
+      "topology": "mismatch",
+      "durable_overrides": {
+        "max_output_bytes": 4096
+      }
+    },
+    "status": "incompatible",
+    "findings": [
+      {
+        "code": "durable_policy_drift",
+        "count": 1
+      },
+      {
+        "code": "topology_mismatch",
+        "count": 1
+      }
+    ]
+  }
+]

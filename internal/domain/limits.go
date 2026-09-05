@@ -43,6 +43,10 @@ const (
 	// policies may reduce this limit but never exceed it.
 	MaxOutputTokens = 8192
 
+	// MaxOutputBytes is the global hard UTF-8 content limit. Workload policies
+	// may reduce it; they may not exceed it.
+	MaxOutputBytes = 256 * 1024
+
 	// MinIdempotencyKeyLen and MaxIdempotencyKeyLen bound the
 	// Idempotency-Key header used at the API boundary.
 	MinIdempotencyKeyLen = 8

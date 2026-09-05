@@ -24,6 +24,8 @@ func ApplyPolicy(ctx context.Context, store *postgres.Store, input postgres.Work
 		MaxAttempts:              input.MaxAttempts,
 		RetryDelaysSeconds:       append([]int(nil), input.RetryDelaysSeconds...),
 		MaxOutputTokens:          input.MaxOutputTokens,
+		MaxOutputBytes:           input.MaxOutputBytes,
+		MaxOutputBytesExplicit:   input.MaxOutputBytesExplicit,
 		AllowedCapabilities:      append([]string(nil), input.AllowedCapabilities...),
 		AllowedGeneration:        append([]byte(nil), input.AllowedGeneration...),
 		RequiredFeatures:         append([]string(nil), input.RequiredFeatures...),

@@ -119,7 +119,8 @@ func applyPolicy(t *testing.T, s *Store, input WorkloadPolicy) WorkloadPolicy {
 	_, err := s.ApplyPolicies(context.Background(), []policy.Workload{{
 		Name: input.Name, PriorityClass: input.PriorityClass, MaxActiveTasks: input.MaxActiveTasks,
 		MaxAttempts: input.MaxAttempts, RetryDelaysSeconds: input.RetryDelaysSeconds,
-		MaxOutputTokens: input.MaxOutputTokens, AllowedGeneration: input.AllowedGeneration,
+		MaxOutputTokens: input.MaxOutputTokens, MaxOutputBytes: input.MaxOutputBytes,
+		MaxOutputBytesExplicit: input.MaxOutputBytesExplicit, AllowedGeneration: input.AllowedGeneration,
 		RequiredFeatures: input.RequiredFeatures, WorkloadTimeoutSeconds: input.WorkloadTimeoutSeconds,
 		PayloadRetentionSeconds: input.PayloadRetentionSeconds, ResultRetentionSeconds: input.ResultRetentionSeconds,
 		MetadataRetentionSeconds: input.MetadataRetentionSeconds, AllowedCapabilities: input.AllowedCapabilities,

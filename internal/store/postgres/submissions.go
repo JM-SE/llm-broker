@@ -300,8 +300,9 @@ func equalBytes(a, b []byte) bool {
 
 func readSubmissionPolicy(ctx context.Context, tx pgx.Tx, slug string) (WorkloadPolicy, error) {
 	var p WorkloadPolicy
+	var maxOutputBytes *int
 	err := tx.QueryRow(ctx, `SELECT id,name,priority_class,max_active_tasks,max_attempts,
-		retry_delays_seconds,max_output_tokens,allowed_generation,required_features,
+		retry_delays_seconds,max_output_tokens,max_output_bytes,allowed_generation,required_features,
 		workload_timeout_seconds,payload_retention_seconds,result_retention_seconds,
 		metadata_retention_seconds,topology_digest,
 		COALESCE((SELECT array_agg(capability ORDER BY capability)
@@ -310,12 +311,16 @@ func readSubmissionPolicy(ctx context.Context, tx pgx.Tx, slug string) (Workload
 		created_at,updated_at
 		FROM workload_policies WHERE name=$1`, slug).Scan(
 		&p.ID, &p.Name, &p.PriorityClass, &p.MaxActiveTasks, &p.MaxAttempts,
-		&p.RetryDelaysSeconds, &p.MaxOutputTokens, &p.AllowedGeneration,
+		&p.RetryDelaysSeconds, &p.MaxOutputTokens, &maxOutputBytes, &p.AllowedGeneration,
 		&p.RequiredFeatures, &p.WorkloadTimeoutSeconds, &p.PayloadRetentionSeconds,
 		&p.ResultRetentionSeconds, &p.MetadataRetentionSeconds, &p.TopologyDigest,
 		&p.AllowedCapabilities, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WorkloadPolicy{}, ErrNotFound
+	}
+	if maxOutputBytes != nil {
+		p.MaxOutputBytes = *maxOutputBytes
+		p.MaxOutputBytesExplicit = true
 	}
 	return p, err
 }

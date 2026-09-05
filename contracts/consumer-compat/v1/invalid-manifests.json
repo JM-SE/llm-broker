@@ -1,0 +1,8 @@
+[
+  {"name": "unknown-version", "manifest": {"version": "consumer-compat/v2"}},
+  {"name": "unknown-field", "manifest": {"version": "consumer-compat/v1", "unexpected": true}},
+  {"name": "wildcard-workload", "manifest": {"version": "consumer-compat/v1", "workload": "*"}},
+  {"name": "null-required", "manifest": {"version": "consumer-compat/v1", "api_range": null}},
+  {"name": "duplicate-nested-key", "raw": "{\"version\":\"consumer-compat/v1\",\"response\":{\"kind\":\"text\",\"kind\":\"text\"}}"},
+  {"name": "deep-document", "raw": "{\"version\":\"consumer-compat/v1\",\"nested\":{\"nested\":{\"nested\":{\"nested\":{\"nested\":{\"nested\":{\"nested\":{\"nested\":{\"nested\":true}}}}}}}}}"}
+]

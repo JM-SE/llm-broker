@@ -162,3 +162,54 @@ func TestOpenAPIExampleSubmissionsValidates(t *testing.T) {
 		t.Error("else branch must not require the schema property")
 	}
 }
+
+// TestOpenAPITerminalEnvelopesMatchBundle validates every canonical
+// terminal envelope from the consumer-compat/v1 fixture bundle against the
+// published TaskResult schema, and rejects near-miss envelopes that would
+// blur terminal states.
+func TestOpenAPITerminalEnvelopesMatchBundle(t *testing.T) {
+	data, err := os.ReadFile(openapiPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := openapi3.NewLoader().LoadFromData(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := doc.Components.Schemas["TaskResult"].Value
+	if schema == nil {
+		t.Fatal("missing TaskResult schema")
+	}
+	raw, err := os.ReadFile("../contracts/consumer-compat/v1/terminal-envelopes.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelopes []any
+	if err := json.Unmarshal(raw, &envelopes); err != nil {
+		t.Fatal(err)
+	}
+	if len(envelopes) != 5 {
+		t.Fatalf("terminal envelope count = %d, want 5", len(envelopes))
+	}
+	for i, envelope := range envelopes {
+		if err := schema.VisitJSON(envelope); err != nil {
+			t.Errorf("envelope %d invalid against TaskResult: %v", i, err)
+		}
+	}
+	nearMiss := []string{
+		`{"status":"pending","result":{"content":"x","finish_reason":"stop","usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}}`,
+		`{"status":"succeeded"}`,
+		`{"status":"failed"}`,
+		`{"status":"cancelled","error":{"class":"internal","code":"internal_error","message":"x"}}`,
+		`{"status":"expired","result":{"content":"x","finish_reason":"stop","usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}}`,
+	}
+	for i, raw := range nearMiss {
+		var value any
+		if err := json.Unmarshal([]byte(raw), &value); err != nil {
+			t.Fatal(err)
+		}
+		if err := schema.VisitJSON(value); err == nil {
+			t.Errorf("near-miss envelope %d was accepted", i)
+		}
+	}
+}

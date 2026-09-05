@@ -1,0 +1,11 @@
+{
+  "bundle_version": "consumer-compat/v1",
+  "digest": "sha256:292c18eca1fafd81bd828d69f1264bad9b18f529c838a46a2ed1d5f29d2cb0a3",
+  "vectors": [
+    "valid-manifests.json",
+    "invalid-manifests.json",
+    "decisions.json",
+    "terminal-envelopes.json",
+    "transport-outcomes.json"
+  ]
+}

@@ -368,15 +368,40 @@ func TestH00MigrationDownFailsWithoutChangingVersion(t *testing.T) {
 	if before != latest {
 		t.Fatalf("database version = %d, want latest %d", before, latest)
 	}
-	if _, err := provider.DownTo(ctx, latest-1); err == nil {
+
+	// H03 (the newest migration) has a supported down: it must remove only
+	// its own column/constraint and leave the version one step behind.
+	if _, err := provider.DownTo(ctx, latest-1); err != nil {
+		t.Fatalf("H03 down migration failed: %v", err)
+	}
+	dropped, err := provider.GetDBVersion(ctx)
+	if err != nil {
+		t.Fatalf("read migration version after H03 down: %v", err)
+	}
+	if dropped != latest-1 {
+		t.Fatalf("version after H03 down = %d, want %d", dropped, latest-1)
+	}
+	var outputBytesColumn int
+	if err := adminStore.pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema='public' AND table_name='workload_policies'
+		  AND column_name='max_output_bytes'`).Scan(&outputBytesColumn); err != nil {
+		t.Fatalf("check H03 schema after down: %v", err)
+	}
+	if outputBytesColumn != 0 {
+		t.Fatal("H03 down left max_output_bytes in place")
+	}
+
+	// Rolling back past H00 must stay impossible: H00 is forward-only.
+	if _, err := provider.DownTo(ctx, latest-2); err == nil {
 		t.Fatal("forward-only migration down unexpectedly succeeded")
 	}
 	after, err := provider.GetDBVersion(ctx)
 	if err != nil {
 		t.Fatalf("read migration version after rejected down: %v", err)
 	}
-	if after != before {
-		t.Fatalf("migration version changed after rejected down: before=%d after=%d", before, after)
+	if after != dropped {
+		t.Fatalf("migration version changed after rejected down: before=%d after=%d", dropped, after)
 	}
 	var topologyColumn int
 	if err := adminStore.pool.QueryRow(ctx, `
@@ -387,5 +412,128 @@ func TestH00MigrationDownFailsWithoutChangingVersion(t *testing.T) {
 	}
 	if topologyColumn != 1 {
 		t.Fatal("H00 schema changed after rejected down")
+	}
+
+	// Re-applying migrations must restore the H03 column so the remaining
+	// tests and production roll-forward paths behave identically.
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("re-apply migrations after H03 down: %v", err)
+	}
+	restored, err := provider.GetDBVersion(ctx)
+	if err != nil {
+		t.Fatalf("read migration version after re-apply: %v", err)
+	}
+	if restored != latest {
+		t.Fatalf("version after re-apply = %d, want %d", restored, latest)
+	}
+	if err := adminStore.pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema='public' AND table_name='workload_policies'
+		  AND column_name='max_output_bytes'`).Scan(&outputBytesColumn); err != nil {
+		t.Fatalf("check H03 schema after re-apply: %v", err)
+	}
+	if outputBytesColumn != 1 {
+		t.Fatal("re-apply did not restore max_output_bytes")
+	}
+}
+
+// TestH03OutputBytesColumnBoundsGrantsAndBackfill pins the migration 00005
+// contract: inclusive 1..262144 bounds, no forced backfill (omitted stays
+// NULL), provisioner UPDATE on the new column only, runtime denial, and a
+// stable double-Up.
+func TestH03OutputBytesColumnBoundsGrantsAndBackfill(t *testing.T) {
+	ctx := context.Background()
+	policy := mustUpsertPolicy(t, adminStore, "h03-bounds")
+
+	// Omitted bytes are stored as NULL: the migration forces no backfill.
+	var isNull bool
+	if err := adminStore.pool.QueryRow(ctx,
+		`SELECT max_output_bytes IS NULL FROM workload_policies WHERE id = $1`,
+		policy.ID).Scan(&isNull); err != nil {
+		t.Fatalf("read backfill state: %v", err)
+	}
+	if !isNull {
+		t.Fatal("omitted max_output_bytes was backfilled, want NULL")
+	}
+
+	assertRejected := func(statement string, args ...any) {
+		t.Helper()
+		tx, err := adminStore.pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin bounds transaction: %v", err)
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // rollback is expected after failures
+		if _, err := tx.Exec(ctx, statement, args...); err == nil {
+			t.Fatalf("statement unexpectedly succeeded: %s", statement)
+		}
+	}
+
+	assertRejected("UPDATE workload_policies SET max_output_bytes = 0 WHERE id = $1", policy.ID)
+	assertRejected("UPDATE workload_policies SET max_output_bytes = 262145 WHERE id = $1", policy.ID)
+
+	tx, err := adminStore.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin valid bounds transaction: %v", err)
+	}
+	if _, err := tx.Exec(ctx, "UPDATE workload_policies SET max_output_bytes = 1 WHERE id = $1", policy.ID); err != nil {
+		t.Fatalf("byte lower boundary: %v", err)
+	}
+	if _, err := tx.Exec(ctx, "UPDATE workload_policies SET max_output_bytes = 262144 WHERE id = $1", policy.ID); err != nil {
+		t.Fatalf("byte upper boundary: %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("rollback valid bounds transaction: %v", err)
+	}
+
+	// The provisioner owns the new column: UPDATE succeeds for it…
+	if _, err := provisionerStore.pool.Exec(ctx,
+		"UPDATE workload_policies SET max_output_bytes = 4096 WHERE id = $1", policy.ID); err != nil {
+		t.Fatalf("provisioner UPDATE(max_output_bytes): %v", err)
+	}
+	var stored int
+	if err := adminStore.pool.QueryRow(ctx,
+		`SELECT max_output_bytes FROM workload_policies WHERE id = $1`, policy.ID).Scan(&stored); err != nil {
+		t.Fatalf("read provisioner write: %v", err)
+	}
+	if stored != 4096 {
+		t.Fatalf("provisioner write = %d, want 4096", stored)
+	}
+	if _, err := adminStore.pool.Exec(ctx,
+		"UPDATE workload_policies SET max_output_bytes = NULL WHERE id = $1", policy.ID); err != nil {
+		t.Fatalf("reset test column: %v", err)
+	}
+
+	// …while the runtime role is denied.
+	if _, err := rtStore.pool.Exec(ctx,
+		"UPDATE workload_policies SET max_output_bytes = 4096 WHERE id = $1", policy.ID); err == nil {
+		t.Fatal("runtime role updated max_output_bytes, want permission denied")
+	} else if !strings.Contains(strings.ToLower(err.Error()), "permission denied") {
+		t.Fatalf("runtime UPDATE error = %v, want permission denied", err)
+	}
+
+	// Re-applying all migrations over an up-to-date schema is stable.
+	std := stdlib.OpenDBFromPool(adminStore.pool)
+	defer std.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, std, migrations.FS)
+	if err != nil {
+		t.Fatalf("provider: %v", err)
+	}
+	defer provider.Close()
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("first re-apply: %v", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("second re-apply (idempotence): %v", err)
+	}
+	version, err := provider.GetDBVersion(ctx)
+	if err != nil {
+		t.Fatalf("read version after re-apply: %v", err)
+	}
+	latest, err := migrations.LatestVersion()
+	if err != nil {
+		t.Fatalf("read latest migration: %v", err)
+	}
+	if version != latest {
+		t.Fatalf("version after re-apply = %d, want %d", version, latest)
 	}
 }

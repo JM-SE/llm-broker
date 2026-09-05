@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: LLM Broker API
-  version: 0.1.0
+  version: 0.1.1
   description: |
     Durable single-host inference scheduler. Clients enqueue tasks; exactly
     one inference runs at a time under operator policy. This API never
@@ -443,17 +443,53 @@ components:
       type: string
       enum: [queued, running, succeeded, failed, cancelled]
     TaskResult:
+      oneOf:
+        - $ref: "#/components/schemas/PendingTaskResult"
+        - $ref: "#/components/schemas/SucceededTaskResult"
+        - $ref: "#/components/schemas/FailedTaskResult"
+        - $ref: "#/components/schemas/CancelledTaskResult"
+        - $ref: "#/components/schemas/ExpiredTaskResult"
+      discriminator:
+        propertyName: status
+    PendingTaskResult:
       type: object
       additionalProperties: false
       required: [status]
       properties:
         status:
-          type: string
-          enum: [pending, succeeded, failed, cancelled, expired]
+          const: pending
+    SucceededTaskResult:
+      type: object
+      additionalProperties: false
+      required: [status, result]
+      properties:
+        status:
+          const: succeeded
         result:
           $ref: "#/components/schemas/InferenceResult"
+    FailedTaskResult:
+      type: object
+      additionalProperties: false
+      required: [status, error]
+      properties:
+        status:
+          const: failed
         error:
           $ref: "#/components/schemas/ClassifiedError"
+    CancelledTaskResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          const: cancelled
+    ExpiredTaskResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          const: expired
     InferenceResult:
       type: object
       additionalProperties: false

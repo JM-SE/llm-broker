@@ -10,6 +10,8 @@ type Workload struct {
 	MaxAttempts              int
 	RetryDelaysSeconds       []int
 	MaxOutputTokens          int
+	MaxOutputBytes           int
+	MaxOutputBytesExplicit   bool
 	AllowedCapabilities      []string
 	AllowedGeneration        []byte
 	RequiredFeatures         []string
@@ -29,6 +31,8 @@ func (w Workload) SemanticallyEqual(other Workload) bool {
 		w.MaxAttempts == other.MaxAttempts &&
 		intsEqual(w.RetryDelaysSeconds, other.RetryDelaysSeconds) &&
 		w.MaxOutputTokens == other.MaxOutputTokens &&
+		w.MaxOutputBytes == other.MaxOutputBytes &&
+		w.MaxOutputBytesExplicit == other.MaxOutputBytesExplicit &&
 		stringsEqual(w.AllowedCapabilities, other.AllowedCapabilities) &&
 		JSONSemanticallyEqual(w.AllowedGeneration, other.AllowedGeneration) &&
 		stringsEqual(w.RequiredFeatures, other.RequiredFeatures) &&

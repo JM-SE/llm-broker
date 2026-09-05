@@ -136,7 +136,12 @@ func (w *Worker) execute(ctx context.Context, tw postgres.TaskWithPayload) error
 
 	if err := validateOutput(policy, sub.Response, resp); err != nil {
 		log.Error("output failed validation; marking failed", "error", err)
-		_, err = w.store.FinishTaskFailed(execCtx, tw.ID, attempt, string(domain.ErrorOutputInvalid), "output_invalid")
+		code := "output_invalid"
+		var outputErr *outputValidationError
+		if errors.As(err, &outputErr) {
+			code = outputErr.Code
+		}
+		_, err = w.store.FinishTaskFailed(execCtx, tw.ID, attempt, string(domain.ErrorOutputInvalid), code)
 		w.metrics.IncInference(string(domain.ErrorOutputInvalid))
 		return err
 	}
@@ -280,28 +285,4 @@ func decodePayload(raw []byte) (*domain.TaskSubmission, error) {
 		return nil, fmt.Errorf("payload validation: %w", err)
 	}
 	return &sub, nil
-}
-
-// validateOutput enforces the size bound and the response contract before
-// any output is persisted. Reasoning content never exists in this type.
-func validateOutput(policy postgres.WorkloadPolicy, rc domain.ResponseContract, resp *backend.Response) error {
-	maxContent := int64(policy.MaxOutputTokens) * 4 // ~4 bytes per token
-	if int64(len(resp.Content)) > maxContent {
-		return fmt.Errorf("output size %d exceeds the workload limit %d bytes", len(resp.Content), maxContent)
-	}
-	switch rc.Kind {
-	case domain.ResponseText:
-		return nil
-	case domain.ResponseJSONObject:
-		if !json.Valid([]byte(resp.Content)) {
-			return fmt.Errorf("output is not valid JSON")
-		}
-		return nil
-	case domain.ResponseJSONSchema:
-		if rc.Schema == nil {
-			return fmt.Errorf("response contract requires a schema")
-		}
-		return rc.Schema.Validate([]byte(resp.Content))
-	}
-	return fmt.Errorf("unsupported response kind %q", rc.Kind)
 }

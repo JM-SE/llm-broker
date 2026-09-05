@@ -302,6 +302,9 @@ func (c *Config) validateWorkloads() error {
 		if w.MaxOutputTokens < 1 || w.MaxOutputTokens > domain.MaxOutputTokens {
 			return fmt.Errorf("workloads.%s.max_output_tokens %d outside [1, %d]", name, w.MaxOutputTokens, domain.MaxOutputTokens)
 		}
+		if w.MaxOutputBytes < 0 || w.MaxOutputBytes > domain.MaxOutputBytes {
+			return fmt.Errorf("workloads.%s.max_output_bytes %d outside [0, %d]", name, w.MaxOutputBytes, domain.MaxOutputBytes)
+		}
 		for field, cons := range w.AllowedGeneration {
 			if !domain.IsGenerationField(field) {
 				return fmt.Errorf("workloads.%s.allowed_generation: unknown field %q (supported: %s)", name, field, strings.Join(domain.GenerationFieldNames, ", "))

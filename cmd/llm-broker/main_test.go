@@ -56,7 +56,7 @@ func TestPrintUsageTo(t *testing.T) {
 	var buf bytes.Buffer
 	printUsageTo(&buf)
 	output := buf.String()
-	for _, want := range []string{"llm-broker", "api", "worker", "migrate", "client", "config", "version"} {
+	for _, want := range []string{"llm-broker", "api", "worker", "migrate", "client", "config", "policy", "compat", "version"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("usage missing %q", want)
 		}

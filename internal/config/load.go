@@ -103,8 +103,11 @@ func applyDefaults(c *Config) {
 		if w.MaxAttempts == 0 {
 			w.MaxAttempts = defaultMaxAttempts
 		}
-		if len(w.RetryDelaysSeconds) == 0 {
-			w.RetryDelaysSeconds = []int{defaultRetryDelay1, defaultRetryDelay2}
+		if len(w.RetryDelaysSeconds) == 0 && w.MaxAttempts > 1 {
+			w.RetryDelaysSeconds = []int{defaultRetryDelay1}
+			if w.MaxAttempts > 2 {
+				w.RetryDelaysSeconds = append(w.RetryDelaysSeconds, defaultRetryDelay2)
+			}
 		}
 		if w.MaxOutputTokens == 0 {
 			w.MaxOutputTokens = DefaultMaxOutputTokens

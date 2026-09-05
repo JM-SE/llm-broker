@@ -16,9 +16,9 @@
     "metadata": "720h"
   },
   "backends": {
-    "llama-server": {
+    "provider": {
       "type": "openai_compatible",
-      "base_url": "http://llama-server:8001/v1",
+      "base_url": "http://inference-runtime:8001/v1",
       "model": "operator-model-alias",
       "credential_env": "LLM_BACKEND_API_KEY",
       "response_header_timeout_seconds": 60
@@ -26,18 +26,19 @@
   },
   "capabilities": {
     "summarize": {
-      "backend": "llama-server"
+      "backend": "provider"
     }
   },
   "workloads": {
     "batch-summary": {
       "priority_class": "normal",
       "max_active_tasks": 10,
-      "max_attempts": 3,
-      "retry_delays_seconds": [1, 5],
-      "max_output_tokens": 512,
+       "max_attempts": 1,
+       "retry_delays_seconds": [],
+       "max_output_tokens": 1024,
+       "max_output_bytes": 16384,
       "allowed_generation": {
-        "max_tokens": { "max": 512 },
+         "max_tokens": { "max": 1024 },
         "temperature": { "min": 0, "max": 2 }
       },
       "required_features": [],

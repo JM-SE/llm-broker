@@ -1,0 +1,19 @@
+{
+  "version": "consumer-compat/v1",
+  "api_range": ">=0.1.1 <0.2.0",
+  "workload": "batch-summary",
+  "capability": "summarize",
+  "generation": {
+    "max_tokens": 1024,
+    "temperature": 0.7
+  },
+  "response": {
+    "kind": "text"
+  },
+  "max_request_content_bytes": 131072,
+  "required_min_output_bytes": 16384,
+  "min_workload_timeout_seconds": 300,
+  "min_backend_response_start_timeout_seconds": 60,
+  "max_acceptable_attempts": 1,
+  "consumer_overall_deadline_seconds": 360
+}

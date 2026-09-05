@@ -56,33 +56,33 @@ func TestDecodeValid(t *testing.T) {
 	}
 }
 
-func TestYTPipeExampleMatchesProbeContract(t *testing.T) {
+func TestSummaryExampleMatchesConsumerContract(t *testing.T) {
 	_, source, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	path := filepath.Join(filepath.Dir(source), "..", "..", "examples", "ytpipe-openai-compatible.json")
+	path := filepath.Join(filepath.Dir(source), "..", "..", "examples", "openai-compatible-summary.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read YTPipe example: %v", err)
+		t.Fatalf("read summary example: %v", err)
 	}
 	cfg, err := Decode(strings.NewReader(string(raw)))
 	if err != nil {
-		t.Fatalf("decode YTPipe example: %v", err)
+		t.Fatalf("decode summary example: %v", err)
 	}
 	workload, ok := cfg.Workloads["batch-summary"]
 	if !ok {
-		t.Fatal("YTPipe workload is missing")
+		t.Fatal("summary workload is missing")
 	}
-	if workload.MaxOutputTokens != 512 || len(workload.AllowedCapabilities) != 1 || workload.AllowedCapabilities[0] != "summarize" {
-		t.Fatalf("unexpected YTPipe workload: %+v", workload)
+	if workload.MaxOutputTokens != 1024 || workload.MaxOutputBytes != 16384 || len(workload.AllowedCapabilities) != 1 || workload.AllowedCapabilities[0] != "summarize" {
+		t.Fatalf("unexpected summary workload: %+v", workload)
 	}
-	if got := cfg.Backends["llama-server"].ResponseHeaderTimeoutSeconds; got != 60 {
-		t.Fatalf("YTPipe response header timeout = %d, want 60", got)
+	if got := cfg.Backends["provider"].ResponseHeaderTimeoutSeconds; got != 60 {
+		t.Fatalf("summary response header timeout = %d, want 60", got)
 	}
 	projected, err := cfg.PolicyProjections()
 	if err != nil {
-		t.Fatalf("project YTPipe policy: %v", err)
+		t.Fatalf("project summary policy: %v", err)
 	}
 	var batch policy.Workload
 	for _, candidate := range projected {
@@ -91,12 +91,12 @@ func TestYTPipeExampleMatchesProbeContract(t *testing.T) {
 			break
 		}
 	}
-	maxTokens := int64(512)
+	maxTokens := int64(1024)
 	temperature := 0.7
 	if err := policy.ValidateGeneration(domain.Generation{
 		MaxTokens: &maxTokens, Temperature: &temperature,
 	}, batch.AllowedGeneration, batch.MaxOutputTokens); err != nil {
-		t.Fatalf("YTPipe probe generation rejected: %v", err)
+		t.Fatalf("summary probe generation rejected: %v", err)
 	}
 }
 

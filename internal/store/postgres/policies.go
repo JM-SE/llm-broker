@@ -27,6 +27,8 @@ type WorkloadPolicy struct {
 	MaxAttempts              int
 	RetryDelaysSeconds       []int
 	MaxOutputTokens          int
+	MaxOutputBytes           int
+	MaxOutputBytesExplicit   bool
 	AllowedGeneration        []byte
 	RequiredFeatures         []string
 	WorkloadTimeoutSeconds   int
@@ -43,7 +45,7 @@ type WorkloadPolicy struct {
 // capability projection.
 func (s *Store) GetWorkloadPolicyByName(ctx context.Context, name string) (WorkloadPolicy, error) {
 	return s.getWorkloadPolicy(ctx, `SELECT id,name,priority_class,max_active_tasks,max_attempts,
-		retry_delays_seconds,max_output_tokens,allowed_generation,required_features,
+		retry_delays_seconds,max_output_tokens,max_output_bytes,allowed_generation,required_features,
 		workload_timeout_seconds,payload_retention_seconds,result_retention_seconds,
 		metadata_retention_seconds,topology_digest,
 		COALESCE((SELECT array_agg(capability ORDER BY capability) FROM workload_policy_capabilities wpc WHERE wpc.workload_id=workload_policies.id), '{}'::text[]),
@@ -53,7 +55,7 @@ func (s *Store) GetWorkloadPolicyByName(ctx context.Context, name string) (Workl
 // GetWorkloadPolicyByID returns the effective durable policy by numeric row ID.
 func (s *Store) GetWorkloadPolicyByID(ctx context.Context, id int64) (WorkloadPolicy, error) {
 	return s.getWorkloadPolicy(ctx, `SELECT id,name,priority_class,max_active_tasks,max_attempts,
-		retry_delays_seconds,max_output_tokens,allowed_generation,required_features,
+		retry_delays_seconds,max_output_tokens,max_output_bytes,allowed_generation,required_features,
 		workload_timeout_seconds,payload_retention_seconds,result_retention_seconds,
 		metadata_retention_seconds,topology_digest,
 		COALESCE((SELECT array_agg(capability ORDER BY capability) FROM workload_policy_capabilities wpc WHERE wpc.workload_id=workload_policies.id), '{}'::text[]),
@@ -62,14 +64,19 @@ func (s *Store) GetWorkloadPolicyByID(ctx context.Context, id int64) (WorkloadPo
 
 func (s *Store) getWorkloadPolicy(ctx context.Context, query string, arg any) (WorkloadPolicy, error) {
 	var p WorkloadPolicy
+	var maxOutputBytes *int
 	err := s.pool.QueryRow(ctx, query, arg).Scan(
 		&p.ID, &p.Name, &p.PriorityClass, &p.MaxActiveTasks, &p.MaxAttempts,
-		&p.RetryDelaysSeconds, &p.MaxOutputTokens, &p.AllowedGeneration,
+		&p.RetryDelaysSeconds, &p.MaxOutputTokens, &maxOutputBytes, &p.AllowedGeneration,
 		&p.RequiredFeatures, &p.WorkloadTimeoutSeconds, &p.PayloadRetentionSeconds,
 		&p.ResultRetentionSeconds, &p.MetadataRetentionSeconds, &p.TopologyDigest,
 		&p.AllowedCapabilities, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WorkloadPolicy{}, ErrNotFound
+	}
+	if maxOutputBytes != nil {
+		p.MaxOutputBytes = *maxOutputBytes
+		p.MaxOutputBytesExplicit = true
 	}
 	return p, err
 }
@@ -227,13 +234,13 @@ func applyPolicyProjection(ctx context.Context, tx pgx.Tx, desired policy.Worklo
 		err = tx.QueryRow(ctx, `
 			INSERT INTO workload_policies (
 				name, priority_class, max_active_tasks, max_attempts,
-				retry_delays_seconds, max_output_tokens, allowed_generation,
+				retry_delays_seconds, max_output_tokens, max_output_bytes, allowed_generation,
 				required_features, workload_timeout_seconds,
 				payload_retention_seconds, result_retention_seconds,
 				metadata_retention_seconds, topology_digest)
-			VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14)
 			RETURNING id`, desired.Name, desired.PriorityClass, desired.MaxActiveTasks,
-			desired.MaxAttempts, desired.RetryDelaysSeconds, desired.MaxOutputTokens,
+			desired.MaxAttempts, desired.RetryDelaysSeconds, desired.MaxOutputTokens, nullableOutputBytes(desired.MaxOutputBytes),
 			desired.AllowedGeneration, requiredFeatures, desired.WorkloadTimeoutSeconds,
 			desired.PayloadRetentionSeconds, desired.ResultRetentionSeconds,
 			desired.MetadataRetentionSeconds, desired.TopologyDigest[:]).Scan(&id)
@@ -244,12 +251,12 @@ func applyPolicyProjection(ctx context.Context, tx pgx.Tx, desired policy.Worklo
 		_, err = tx.Exec(ctx, `
 			UPDATE workload_policies SET priority_class=$2, max_active_tasks=$3,
 			max_attempts=$4, retry_delays_seconds=$5, max_output_tokens=$6,
-			allowed_generation=$7::jsonb, required_features=$8,
-			workload_timeout_seconds=$9, payload_retention_seconds=$10,
-			result_retention_seconds=$11, metadata_retention_seconds=$12,
-			topology_digest=$13, updated_at=now() WHERE id=$1`, id,
+			max_output_bytes=$7, allowed_generation=$8::jsonb, required_features=$9,
+			workload_timeout_seconds=$10, payload_retention_seconds=$11,
+			result_retention_seconds=$12, metadata_retention_seconds=$13,
+			topology_digest=$14, updated_at=now() WHERE id=$1`, id,
 			desired.PriorityClass, desired.MaxActiveTasks, desired.MaxAttempts,
-			desired.RetryDelaysSeconds, desired.MaxOutputTokens, desired.AllowedGeneration,
+			desired.RetryDelaysSeconds, desired.MaxOutputTokens, nullableOutputBytes(desired.MaxOutputBytes), desired.AllowedGeneration,
 			requiredFeatures, desired.WorkloadTimeoutSeconds,
 			desired.PayloadRetentionSeconds, desired.ResultRetentionSeconds,
 			desired.MetadataRetentionSeconds, desired.TopologyDigest[:])
@@ -283,13 +290,14 @@ func readPolicy(ctx context.Context, q policyQuerier, name string) (policy.Workl
 	var p policy.Workload
 	var id int64
 	var digest []byte
+	var maxOutputBytes *int
 	err := q.QueryRow(ctx, `SELECT id, name, priority_class, max_active_tasks,
-		max_attempts, retry_delays_seconds, max_output_tokens, allowed_generation,
+		max_attempts, retry_delays_seconds, max_output_tokens, max_output_bytes, allowed_generation,
 		required_features, workload_timeout_seconds, payload_retention_seconds,
 		result_retention_seconds, metadata_retention_seconds, topology_digest
 		FROM workload_policies WHERE name=$1`, name).Scan(
 		&id, &p.Name, &p.PriorityClass, &p.MaxActiveTasks, &p.MaxAttempts,
-		&p.RetryDelaysSeconds, &p.MaxOutputTokens, &p.AllowedGeneration,
+		&p.RetryDelaysSeconds, &p.MaxOutputTokens, &maxOutputBytes, &p.AllowedGeneration,
 		&p.RequiredFeatures, &p.WorkloadTimeoutSeconds, &p.PayloadRetentionSeconds,
 		&p.ResultRetentionSeconds, &p.MetadataRetentionSeconds, &digest)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -297,6 +305,10 @@ func readPolicy(ctx context.Context, q policyQuerier, name string) (policy.Workl
 	}
 	if err != nil {
 		return policy.Workload{}, false, 0, err
+	}
+	if maxOutputBytes != nil {
+		p.MaxOutputBytes = *maxOutputBytes
+		p.MaxOutputBytesExplicit = true
 	}
 	canonicalGeneration, err := policy.CanonicalJSON(p.AllowedGeneration)
 	if err != nil {
@@ -321,6 +333,13 @@ func readPolicy(ctx context.Context, q policyQuerier, name string) (policy.Workl
 	}
 	p.AllowedCapabilities = caps
 	return p, true, id, rows.Err()
+}
+
+func nullableOutputBytes(value int) any {
+	if value == 0 {
+		return nil
+	}
+	return value
 }
 
 func bytesToDigest(b []byte) [32]byte {

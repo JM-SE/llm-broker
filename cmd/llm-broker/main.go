@@ -13,6 +13,7 @@ import (
 const (
 	exitOk             = 0
 	exitUsage          = 1
+	exitIncompatible   = 2
 	exitNotImplemented = 1
 )
 
@@ -48,6 +49,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runConfig(args[2:], stdout, stderr)
 	case "policy":
 		return runPolicy(ctx, args[2:], stdout, stderr)
+	case "compat":
+		return runCompat(ctx, args[2:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n\n", cmd)
 		printUsageTo(stderr)
@@ -72,6 +75,7 @@ commands:
   client    manage API credentials and workload grants
   config    validate or inspect configuration
   policy    validate, diff, apply, or inspect durable workload policy
+  compat    verify desired or effective consumer compatibility
   version   print version and build information
 
 config:
@@ -109,6 +113,12 @@ policy:
   llm-broker policy validate [path]
   llm-broker policy diff|apply|status [path]
     validate is database-free; the other commands require the provisioner role
+
+compat:
+  llm-broker compat desired --manifest <path> [config-path]
+  llm-broker compat effective --manifest <path> --client <name> [config-path]
+    prints only a safe status, semantic manifest digest, and sorted finding
+    codes; effective mode is read-only and uses the provisioner role
 
 `)
 }
