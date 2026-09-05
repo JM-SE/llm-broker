@@ -222,6 +222,13 @@ func applyPolicyProjection(ctx context.Context, tx pgx.Tx, desired policy.Worklo
 		// feature set as the empty set at the persistence boundary.
 		requiredFeatures = []string{}
 	}
+	retryDelays := desired.RetryDelaysSeconds
+	if retryDelays == nil {
+		// Same NOT NULL coercion as above: an omitted retry-delay set is the
+		// empty set. This is required for max_attempts=1 (H03/G Y01 profile),
+		// where the config validator forbids any retry entry.
+		retryDelays = []int{}
+	}
 	actual, exists, id, err := readPolicy(ctx, tx, desired.Name)
 	if err != nil {
 		return "", err
@@ -240,7 +247,7 @@ func applyPolicyProjection(ctx context.Context, tx pgx.Tx, desired policy.Worklo
 				metadata_retention_seconds, topology_digest)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14)
 			RETURNING id`, desired.Name, desired.PriorityClass, desired.MaxActiveTasks,
-			desired.MaxAttempts, desired.RetryDelaysSeconds, desired.MaxOutputTokens, nullableOutputBytes(desired.MaxOutputBytes),
+			desired.MaxAttempts, retryDelays, desired.MaxOutputTokens, nullableOutputBytes(desired.MaxOutputBytes),
 			desired.AllowedGeneration, requiredFeatures, desired.WorkloadTimeoutSeconds,
 			desired.PayloadRetentionSeconds, desired.ResultRetentionSeconds,
 			desired.MetadataRetentionSeconds, desired.TopologyDigest[:]).Scan(&id)
@@ -256,7 +263,7 @@ func applyPolicyProjection(ctx context.Context, tx pgx.Tx, desired policy.Worklo
 			result_retention_seconds=$12, metadata_retention_seconds=$13,
 			topology_digest=$14, updated_at=now() WHERE id=$1`, id,
 			desired.PriorityClass, desired.MaxActiveTasks, desired.MaxAttempts,
-			desired.RetryDelaysSeconds, desired.MaxOutputTokens, nullableOutputBytes(desired.MaxOutputBytes), desired.AllowedGeneration,
+			retryDelays, desired.MaxOutputTokens, nullableOutputBytes(desired.MaxOutputBytes), desired.AllowedGeneration,
 			requiredFeatures, desired.WorkloadTimeoutSeconds,
 			desired.PayloadRetentionSeconds, desired.ResultRetentionSeconds,
 			desired.MetadataRetentionSeconds, desired.TopologyDigest[:])

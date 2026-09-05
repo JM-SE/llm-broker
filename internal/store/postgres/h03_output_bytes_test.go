@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/JM-SE/llm-broker/internal/policy"
 )
 
 // h03Policy applies a workload policy with an explicit output-byte bound so
@@ -30,6 +32,61 @@ func h03Policy(t *testing.T, store *Store, name string, digest []byte, maxOutput
 		AllowedCapabilities:      []string{"instruct"},
 		TopologyDigest:           digest,
 	})
+}
+
+// TestH03EmptyRetryDelaysPersistAsEmptySet is the regression test for the
+// acceptance blocker where a max_attempts=1 workload (H03/G frozen Y01
+// profile, where the config validator forbids any retry entry) failed policy
+// apply with `null value in column "retry_delays_seconds" violates not-null
+// constraint`. A nil retry-delay set reached the INSERT verbatim and pgx
+// encoded it as NULL. The persistence boundary must coerce nil to the empty
+// set, mirroring the required_features normalization.
+func TestH03EmptyRetryDelaysPersistAsEmptySet(t *testing.T) {
+	ctx := context.Background()
+	digest := h00Digest(0x72)
+	name := uniqueName("h03-no-retry")
+	desired := policy.Workload{
+		Name:                     name,
+		PriorityClass:            "normal",
+		MaxActiveTasks:           10,
+		MaxAttempts:              1,
+		RetryDelaysSeconds:       nil,
+		MaxOutputTokens:          1024,
+		MaxOutputBytes:           16384,
+		MaxOutputBytesExplicit:   true,
+		AllowedGeneration:        []byte(`{"max_tokens":{"max":1024},"temperature":{"min":0,"max":2}}`),
+		RequiredFeatures:         nil,
+		WorkloadTimeoutSeconds:   300,
+		PayloadRetentionSeconds:  3600,
+		ResultRetentionSeconds:   86400,
+		MetadataRetentionSeconds: 2592000,
+		AllowedCapabilities:      []string{"summarize"},
+		TopologyDigest:           digest,
+	}
+
+	if _, err := adminStore.ApplyPolicies(ctx, []policy.Workload{desired}); err != nil {
+		t.Fatalf("apply max_attempts=1 policy with nil retry delays: %v", err)
+	}
+	p, err := adminStore.GetWorkloadPolicyByName(ctx, name)
+	if err != nil {
+		t.Fatalf("read applied policy: %v", err)
+	}
+	if p.MaxAttempts != 1 {
+		t.Fatalf("MaxAttempts = %d, want 1", p.MaxAttempts)
+	}
+	if len(p.RetryDelaysSeconds) != 0 {
+		t.Fatalf("RetryDelaysSeconds = %v, want empty set", p.RetryDelaysSeconds)
+	}
+
+	// Re-applying the same desired projection must be a no-op: nil and '{}'
+	// are semantically equal, so this must not flap into an endless update.
+	summary, err := adminStore.ApplyPolicies(ctx, []policy.Workload{desired})
+	if err != nil {
+		t.Fatalf("re-apply max_attempts=1 policy: %v", err)
+	}
+	if summary.Update != 0 || summary.Unchanged != 1 {
+		t.Fatalf("re-apply summary = %+v, want update=0 unchanged=1", summary)
+	}
 }
 
 // TestH03SubmissionPolicyProjectsExplicitOutputBytes proves the durable

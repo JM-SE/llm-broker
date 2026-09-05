@@ -266,8 +266,8 @@ func TestBundleVectorsExecute(t *testing.T) {
 	})
 }
 
-// TestY01ConsumerDigestPin freezes the cross-language contract with the YTPipe
-// Y01 profile: the vendored copy of the consumer-owned manifest must parse and
+// TestY01ConsumerDigestPin freezes the cross-language contract with the
+// consumer-owned Y01 profile: the vendored copy of the manifest must parse and
 // produce the exact semantic digest the consumer computes. Any
 // canonicalization drift on either side fails closed here before it can
 // become a false compatibility PASS in the field.
