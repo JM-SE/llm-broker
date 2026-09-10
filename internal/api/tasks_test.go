@@ -42,9 +42,6 @@ func TestCreateTaskCreated(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body %s", resp.StatusCode, b)
 	}
-	if loc := resp.Header.Get("Location"); !strings.HasPrefix(loc, "/v1/tasks/") {
-		t.Errorf("missing Location header: %q", loc)
-	}
 	var task struct {
 		ID         string `json:"id"`
 		Workload   string `json:"workload"`
@@ -54,6 +51,9 @@ func TestCreateTaskCreated(t *testing.T) {
 	}
 	if err := json.Unmarshal(b, &task); err != nil {
 		t.Fatal(err)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/v1/tasks/"+task.ID {
+		t.Errorf("Location = %q, want task location", loc)
 	}
 	if task.Workload != wl || task.Capability != "instruct" || task.Status != "queued" || task.Attempts != 0 {
 		t.Errorf("task mismatch: %+v", task)
@@ -495,7 +495,36 @@ func TestWaitReturnsTerminalWithinBudget(t *testing.T) {
 	if !strings.Contains(string(b), `"succeeded"`) {
 		t.Errorf("wait response not terminal: %s", b)
 	}
+	if loc := resp.Header.Get("Location"); loc != "/v1/tasks/"+id.String() {
+		t.Errorf("200 Location = %q, want task location", loc)
+	}
+	if resp.Header.Get("Retry-After") != "" {
+		t.Error("terminal 200 must not carry Retry-After")
+	}
 	_ = ctx
+}
+
+func TestWaitReturnsFailedTerminalLocation(t *testing.T) {
+	env := newTestEnv(t)
+	tok, _ := newClient(t, "wait-failed")
+	wl := grantWorkload(t, clientIDOf(t, tok), 10)
+	_, b := doReq(t, env.ts, http.MethodPost, "/v1/tasks", tok.Value, "wait-failed-01", "", submission(wl))
+	id, err := uuid.Parse(taskID(t, b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimAndFail(t, id)
+
+	resp, b := doReq(t, env.ts, http.MethodPost, "/v1/tasks", tok.Value, "wait-failed-01", "wait=5", submission(wl))
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(b), `"failed"`) {
+		t.Fatalf("failed wait response: %d %s", resp.StatusCode, b)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/v1/tasks/"+id.String() {
+		t.Errorf("failed 200 Location = %q, want task location", loc)
+	}
+	if resp.Header.Get("Retry-After") != "" {
+		t.Error("failed terminal 200 must not carry Retry-After")
+	}
 }
 
 func TestWaitExpiresWith202(t *testing.T) {
@@ -511,8 +540,9 @@ func TestWaitExpiresWith202(t *testing.T) {
 	if time.Since(start) < 900*time.Millisecond {
 		t.Error("wait budget not honored")
 	}
-	if resp.Header.Get("Retry-After") == "" || resp.Header.Get("Location") == "" {
-		t.Error("202 must carry Retry-After and Location")
+	id := taskID(t, b)
+	if resp.Header.Get("Retry-After") == "" || resp.Header.Get("Location") != "/v1/tasks/"+id {
+		t.Errorf("202 headers = Location %q, Retry-After %q", resp.Header.Get("Location"), resp.Header.Get("Retry-After"))
 	}
 	// Task is still queued: the API never executes anything.
 	resp2, b2 := doReq(t, env.ts, http.MethodGet, "/v1/tasks/"+taskID(t, b), tok.Value, "", "", "")

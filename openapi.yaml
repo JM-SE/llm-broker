@@ -91,7 +91,12 @@ paths:
               $ref: "#/components/schemas/TaskSubmission"
       responses:
         "200":
-          description: Task reached a terminal state within the wait window
+          description: Task reached a terminal state within the wait window; Location identifies the durable task
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -100,6 +105,7 @@ paths:
           description: Task accepted
           headers:
             Location:
+              required: true
               schema:
                 type: string
           content:
@@ -110,9 +116,11 @@ paths:
           description: Task accepted with wait window elapsed before terminal state
           headers:
             Location:
+              required: true
               schema:
                 type: string
             Retry-After:
+              required: true
               schema:
                 type: integer
           content:
