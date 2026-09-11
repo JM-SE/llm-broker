@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -39,6 +40,12 @@ const (
 	maxErrorBodyBytes    = 4 << 10 // provider error bodies are bounded
 	// maxBodyBytes guards against pathologically large request bodies.
 	maxBodyBytes = 512 << 10
+)
+
+// llamaContextExceededPattern recognizes the stable llama.cpp diagnostic while
+// deliberately ignoring the provider's full response body.
+var llamaContextExceededPattern = regexp.MustCompile(
+	`(?i)request\s*\(?\d+\s+tokens?\)?\s+exceeds\s+the\s+available\s+context\s+size\s*\(?\d+\s+tokens?\)?`,
 )
 
 // Adapter is the OpenAI-compatible Chat Completions adapter.
@@ -154,9 +161,10 @@ func (a *Adapter) Infer(ctx context.Context, req *backend.Request) (*backend.Res
 
 	if resp.StatusCode != http.StatusOK {
 		// Drain a bounded amount for connection reuse; the content is never
-		// included in errors.
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorBodyBytes))
-		return nil, classifyHTTPStatus(resp.StatusCode)
+		// included in errors. The bounded copy is only used for stable pattern
+		// classification.
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+		return nil, classifyHTTPStatus(resp.StatusCode, raw)
 	}
 
 	limited := io.LimitReader(resp.Body, a.maxResponseBytes+1)
@@ -293,12 +301,16 @@ func parseChatCompletion(raw []byte) (*backend.Response, error) {
 
 // classifyHTTPStatus maps provider status codes to stable classes. The body
 // is never included in the error.
-func classifyHTTPStatus(status int) *backend.Error {
+func classifyHTTPStatus(status int, body []byte) *backend.Error {
 	switch {
 	case status == http.StatusTooManyRequests || status >= 500:
 		return backend.NewError(domain.ErrorTransientSafe, "backend_error",
 			"the backend reported a transient error")
 	case status >= 400:
+		if llamaContextExceededPattern.Match(body) {
+			return backend.NewError(domain.ErrorBackendRejected, "backend_context_exceeded",
+				"the request exceeded the backend context limit")
+		}
 		return backend.NewError(domain.ErrorBackendRejected, "backend_rejected",
 			"the backend rejected the request")
 	default:

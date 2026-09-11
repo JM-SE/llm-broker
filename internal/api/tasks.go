@@ -385,6 +385,8 @@ func (s *Server) buildResult(ctx context.Context, t postgres.Task) (taskResultRe
 // messages. Provider output never reaches this path.
 func messageForCode(code string) string {
 	switch code {
+	case "backend_context_exceeded":
+		return "the inference request exceeded the backend context limit"
 	case "backend_rejected":
 		return "the inference backend rejected the request"
 	case "output_invalid":

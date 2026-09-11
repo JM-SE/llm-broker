@@ -248,6 +248,52 @@ func TestHTTPStatusClassification(t *testing.T) {
 	}
 }
 
+func TestContextExceededResponseHasStableCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"request (18672 tokens) exceeds the available context size (16384 tokens)"}}`, http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	a := newAdapter(t, srv.URL)
+	_, err := a.Infer(context.Background(), &backend.Request{
+		Messages: []domain.Message{{Role: "user", Content: "x"}},
+		Response: domain.ResponseContract{Kind: domain.ResponseText},
+	})
+	be, ok := err.(*backend.Error)
+	if !ok || be.Class != domain.ErrorBackendRejected || be.Code != "backend_context_exceeded" {
+		t.Fatalf("error = %v, want backend_rejected/backend_context_exceeded", err)
+	}
+	if strings.Contains(be.Message, "18672") || strings.Contains(be.Message, "16384") {
+		t.Fatalf("context details leaked into message: %q", be.Message)
+	}
+}
+
+func TestContextClassificationIsBoundedAndConservative(t *testing.T) {
+	contextMessage := []byte("request (18672 tokens) exceeds the available context size (16384 tokens)")
+
+	if got := classifyHTTPStatus(http.StatusBadRequest, []byte("ordinary rejection")); got.Code != "backend_rejected" {
+		t.Fatalf("generic 400 code = %q, want backend_rejected", got.Code)
+	}
+	if got := classifyHTTPStatus(http.StatusTooManyRequests, contextMessage); got.Code != "backend_error" || got.Class != domain.ErrorTransientSafe {
+		t.Fatalf("429 context code/class = %s/%s, want backend_error/transient_safe", got.Code, got.Class)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, strings.Repeat("x", maxErrorBodyBytes))
+		_, _ = w.Write(contextMessage)
+	}))
+	defer srv.Close()
+	a := newAdapter(t, srv.URL)
+	_, err := a.Infer(context.Background(), &backend.Request{
+		Messages: []domain.Message{{Role: "user", Content: "x"}},
+		Response: domain.ResponseContract{Kind: domain.ResponseText},
+	})
+	be, ok := err.(*backend.Error)
+	if !ok || be.Code != "backend_rejected" {
+		t.Fatalf("truncated context code = %v, want backend_rejected", err)
+	}
+}
+
 func TestMalformedResponseBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
